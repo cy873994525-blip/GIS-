@@ -29,11 +29,15 @@
 GIS第二次作业/
 ├── README.md                  # 本说明：分工、进度、运行与测试
 ├── cost_raster.py             # 甲：栅格加载、元数据、基础校验、成本取值
+├── cost_path/                 # 丙：Dijkstra / A* 搜索引擎
+├── benchmarks/                # 丙：固定种子的规模测速与记录
+├── docs/                      # 丙：接口草案与第一周测试报告
 ├── sample_data/
 │   ├── cost_grid_4x4.json     # 4×4 通用测试样例（5/7/8/4，含 1 个 NoData）
 │   └── cost_grid_5x5.json     # 5×5 通用测试样例（含 NoData 障碍格）
 └── tests/
-    └── test_cost_raster.py    # 甲第一次进度单元测试
+    ├── test_cost_raster.py    # 甲第一次进度单元测试
+    └── test_engine.py         # 丙第一周准确性与甲组数据对接测试
 ```
 
 ## 运行与测试
@@ -87,3 +91,29 @@ python -m py_compile cost_raster.py
 **验证**：单元测试通过；`py_compile` 语法检查通过。
 
 **本次未做（留给后续进度）**：坐标 ↔ 行列号双向换算、键盘/点选输入解析、与丙引擎的接口联调、前端对话框与图层（丁负责）。
+
+## 丙（搜索引擎层）第 1 次进度记录 · 2026-11-16
+
+1. 新增 `cost_path/`：标准库实现的 8 邻域最小堆 Dijkstra 与可切换 A*，返回路径格点、逐段成本、总成本、格网长度、扩展节点数和搜索耗时。
+2. 引擎可直接接收甲组 `cost_raster.py` 的 `RasterData` 字典；数值 NoData 标记自动视为不可通行，原始矩阵和 CRS 元数据不被修改。接口说明见 [丙组接口约定](docs/integration-contract.md)。
+3. 默认逐步成本为两格成本均值乘正交/斜向系数（斜向默认 `√2`），可接入乙组正式代价函数；默认禁止穿越障碍拐角。乙组/老师确认前，此默认规则只作第一周基线。
+4. 测试包含甲组 4×4、5×5 样例，手算 5/7/8/4、障碍/切角/无路径/非法值，以及 30 组随机小格 × 3 种斜向系数与独立算法对照。运行全部测试：
+
+   ```powershell
+   python -m unittest discover -s tests -v
+   ```
+
+5. `benchmarks/run.py` 用固定种子对 100²、500²、1000² 两类格网比较准确性、扩展节点和耗时；首轮数据与限制见 [第一周测试记录](docs/week1-report.md)。
+
+简单调用：
+
+```python
+from cost_raster import load_raster_file
+from cost_path import find_path
+
+raster = load_raster_file("sample_data/cost_grid_4x4.json")
+result = find_path(raster, (0, 0), (3, 3), algorithm="dijkstra")
+print(result.to_dict())
+```
+
+**下周重点**：丙与乙确认正式逐步成本和切角规则，把甲组样例的期望结果定为手算金标准；与甲继续对接坐标转行列接口。后续再由丁把路径格点转换为地图坐标与矢量图层。当前仓库还不是可直接安装的完整插件。
