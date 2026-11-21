@@ -68,6 +68,7 @@ class CostPathDialog(QDialog):
         self.sample = QComboBox()
         self.sample.addItem("内置 4 × 4", "cost_grid_4x4.json")
         self.sample.addItem("内置 5 × 5", "cost_grid_5x5.json")
+        self.sample.addItem("内置 10 × 10", "cost_grid_10x10.json")
         self.algorithm = QComboBox()
         self.algorithm.addItem("Dijkstra", "dijkstra")
         self.algorithm.addItem("A*", "astar")
