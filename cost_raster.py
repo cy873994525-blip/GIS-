@@ -16,8 +16,8 @@
     crs         坐标系说明字符串（可选，缺省为 "unknown"）
     bounds      外包范围 [xmin, ymin, xmax, ymax]，由 origin / 尺寸 / 步长推算
 
-坐标与行列号的换算（row / col 为 0 基下标）在本模块只提供栅格内部几何所需的
-边界信息；地图点选 / 键盘坐标 ↔ 行列号的双向换算放在第二次进度实现。
+坐标与行列号的换算（row / col 为 0 基下标）由 coord_transform.py 负责实现，
+本模块只提供栅格内部几何所需的边界信息（origin / pixel_size / bounds）。
 """
 
 import json

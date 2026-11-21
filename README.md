@@ -1,7 +1,27 @@
 # GIS 第二次作业 · 成本路径插件（栅格成本路径计算与可视化）
 
 课程分组开发作业：在栅格成本表面上计算起点到终点的路径成本，并输出路径矢量图层与总成本。
-本仓库沿用第一次作业的 WebGIS 技术栈：后端 Python 标准库，前端 JavaScript；不引入独立的完整程序或数据库管理，复用课程提供的数据读取与功能。
+不引入独立的完整程序或数据库管理，复用课程提供的数据读取与功能。
+
+## 二次开发平台
+
+**平台选型：QGIS 桌面端 + Python 插件（PyQGIS）。**
+
+选择理由：四人都可免费安装、跨 Windows / macOS / Linux；插件用 Python 编写，不必按平台编译；
+本仓库的数据层、成本规则层、搜索引擎层已全部用 Python 标准库实现，接入 QGIS 时只需补插件界面与
+图层输出，算法代码不用重写。栅格读取、鼠标点选取点、坐标与像元换算、LineString 及点图层创建
+在 PyQGIS 中均有现成接口。
+
+分层与平台的对应关系：
+
+| 层 | 落地方式 |
+| --- | --- |
+| 数据与坐标层（甲） | 纯 Python，`cost_raster.py` 读栅格，`coord_transform.py` 换算坐标与行列号；与 QGIS 的交接见下文「与 QGIS 的对接点」 |
+| 成本规则层（乙） | 纯 Python，不依赖 QGIS |
+| 搜索引擎层（丙） | 纯 Python，不依赖 QGIS |
+| 插件与矢量图层（丁） | PyQGIS：`QgsMapToolEmitPoint` 取点、对话框用 PyQt、`QgsVectorLayer` 建 LineString 与端点图层 |
+
+> 平台只影响丁的图层与界面部分，前三层保持与平台无关，便于在无 QGIS 环境（如 CI、纯 Python 测试）里跑通。
 
 ## 分组分工（四人）
 
@@ -18,8 +38,8 @@
 
 | 进度 | 目标 | 主要内容 | 状态 |
 | --- | --- | --- | --- |
-| **第 1 次** | 项目骨架 + 栅格加载封装与基础校验 | 仓库结构、`cost_raster.py` 栅格读取/元数据/基础校验、4×4 与 5×5 通用测试样例、单元测试、README 分工与进度记录 | ✅ 本次完成 |
-| 第 2 次 | 坐标 ↔ 行列号双向换算 | 地理/平面坐标与栅格行列号换算、键盘坐标录入解析、点选坐标落点换算；往返换算误差与边界用例 | ⬜ 待做 |
+| **第 1 次** | 项目骨架 + 栅格加载封装与基础校验 | 仓库结构、`cost_raster.py` 栅格读取/元数据/基础校验、4×4 与 5×5 通用测试样例、单元测试、README 分工与进度记录 | ✅ 已完成（2026-11-16） |
+| **第 2 次** | 坐标 ↔ 行列号双向换算 | `coord_transform.py`：格心/左上角换算、反算与边界语义、键盘输入解析、起终点落点校验、GeoTransform 与 PyQGIS 适配；30 项单元测试 | ✅ 已完成（2026-11-21） |
 | 第 3 次 | 越界 / NoData 输入校验闭环 | 非法落点、NoData 格、超范围坐标的拦截与中文提示；与丙约定栅格数组与起终点行列号接口；输入侧测试用例归档 | ⬜ 待做 |
 | 第 4 次 | 输入链路联调与测试材料 | 配合丙把真实点选/键盘输入接到引擎；整理输入侧测试用例、截图与说明，纳入提交材料 | ⬜ 待做 |
 
@@ -27,17 +47,23 @@
 
 ```
 GIS第二次作业/
-├── README.md                  # 本说明：分工、进度、运行与测试
+├── README.md                  # 本说明：平台选型、分工、进度、运行与测试
 ├── cost_raster.py             # 甲：栅格加载、元数据、基础校验、成本取值
+├── coord_transform.py         # 甲：坐标 ↔ 行列号双向换算、输入解析、QGIS 对接
+├── cost_rules.py              # 乙：成本规则与单步代价
+├── golden_cases.py            # 乙：手算金标准样例
+├── contract.py                # 乙：全组接口契约草案
 ├── cost_path/                 # 丙：Dijkstra / A* 搜索引擎
 ├── benchmarks/                # 丙：固定种子的规模测速与记录
-├── docs/                      # 丙：接口草案与第一周测试报告
+├── docs/                      # 接口草案与第一周测试报告
 ├── sample_data/
 │   ├── cost_grid_4x4.json     # 4×4 通用测试样例（5/7/8/4，含 1 个 NoData）
 │   └── cost_grid_5x5.json     # 5×5 通用测试样例（含 NoData 障碍格）
 └── tests/
-    ├── test_cost_raster.py    # 甲第一次进度单元测试
-    └── test_engine.py         # 丙第一周准确性与甲组数据对接测试
+    ├── test_cost_raster.py         # 甲第一次进度单元测试
+    ├── test_coord_transform.py     # 甲第二次进度单元测试
+    ├── test_cost_rules.py          # 乙成本规则单元测试
+    └── test_engine.py              # 丙准确性与甲组数据对接测试
 ```
 
 ## 运行与测试
@@ -45,11 +71,27 @@ GIS第二次作业/
 后端核心只使用 Python 标准库，Python 3.8+ 可直接运行。
 
 ```powershell
-# 运行甲模块单元测试
+# 运行全部测试（当前 81 项）
+python -m unittest discover -s tests -v
+
+# 只跑甲的两个模块
 python -m unittest discover -s tests -p "test_cost_raster.py" -v
+python -m unittest discover -s tests -p "test_coord_transform.py" -v
 
 # 语法检查
-python -m py_compile cost_raster.py
+python -m py_compile cost_raster.py coord_transform.py
+```
+
+坐标换算的最小示例（键盘输入 → 行列号）：
+
+```python
+from cost_raster import load_raster_file
+from coord_transform import resolve_point, require_passable, cell_to_map
+
+raster = load_raster_file("sample_data/cost_grid_4x4.json")
+p = require_passable(resolve_point(raster, "0.5, 3.5", role="起点"))
+print(p["row"], p["col"], p["cost"], p["message"])
+x, y = cell_to_map(raster, p["row"], p["col"])   # 反向取格心坐标
 ```
 
 ## 成本栅格 JSON 格式
@@ -91,6 +133,41 @@ python -m py_compile cost_raster.py
 **验证**：单元测试通过；`py_compile` 语法检查通过。
 
 **本次未做（留给后续进度）**：坐标 ↔ 行列号双向换算、键盘/点选输入解析、与丙引擎的接口联调、前端对话框与图层（丁负责）。
+
+## 第 2 次进度记录（甲）
+
+**完成时间**：2026-11-21
+**本次对应任务**：坐标 ↔ 行列号双向换算 + 与 QGIS 平台的坐标对接准备（第 2 次进度）
+
+**本次完成内容**
+
+1. 平台确定：经四人讨论，二次开发平台选定 **QGIS + Python 插件（PyQGIS）**，理由与分层对应关系见文首「二次开发平台」一节。
+2. 新增 `coord_transform.py`（坐标层核心换算）：
+   - `cell_to_map`：行列号 → 地图坐标，支持格心（`anchor="center"`，路径节点与属性挂接使用）与格左上角（`anchor="corner"`，边界核对使用）；
+   - `map_to_cell`：地图坐标 → 行列号，0 基、行向下增大，与 `cost_raster.values` 行序及丙组引擎的 `(row, col)` 约定一致；
+   - 边界语义：外接矩形右边界 `x=xmax`、下边界 `y=ymin` 归入最后一列 / 最后一行（GDAL 闭区间约定）；超出图幅即报错，不静默夹紧到边缘格；
+   - `parse_coord_text`：键盘坐标录入解析，容忍半角/全角逗号、分号、空格、制表符、中英文括号、全角数字、正负号、小数与科学计数法；必须恰好两个数值，多一个少一个都报错，避免静默截断；
+   - `resolve_point` / `describe_cell` / `require_passable`：把键盘输入一次走完「解析 → 换算 → 越界 → NoData」四道校验，输出含中文提示的结构，引擎只会收到合法行列号；
+   - `from_geotransform` / `to_geotransform`：与 GDAL、QGIS 的 6 参数地理变换互相转换；含旋转分量的栅格明确报错，不给出看似正常实则错位的结果；
+   - `from_qgis_layer`：从 `QgsRasterLayer` 取地理变换与尺寸并转成本项目栅格结构；PyQGIS 采用延迟导入，纯 Python 环境不会因缺少 qgis 包而失败。
+3. 新增 `tests/test_coord_transform.py`：**30 项单元测试**，覆盖格心/角点换算、全格往返一致、非正方像元、经纬度负坐标方向、右/下边界归属、越界与浮点容差、NoData 落点拦截、多种键盘输入格式与非法输入、GeoTransform 往返及旋转拒绝。
+4. 更新 `cost_raster.py` 模块说明，明确坐标换算职责已移交 `coord_transform.py`。
+
+**验证**：`test_coord_transform.py` 30 项全部通过；仓库全量 `python -m unittest discover -s tests` 共 **81 项**全部通过；`py_compile` 语法检查通过。
+
+**本次未做（留给后续进度）**：与丙引擎的输入链路联调（第 4 次）、QGIS 地图画布点击取点的实际联调（需在装有 QGIS 的机器上由丁配合验证）、真实课程栅格的 CRS / 投影确认。
+
+### 与 QGIS 的对接点
+
+| 环节 | 甲提供的接口 | 丁在 QGIS 中的用法 |
+| --- | --- | --- |
+| 栅格读入 | `load_raster_file(path)` 或 `from_qgis_layer(layer, values=...)` | 打开课程栅格图层后取地理变换与尺寸，成本矩阵由课程数据读出 |
+| 鼠标点选 | `map_to_cell(raster, x, y)` | `QgsMapToolEmitPoint` 拿到画布坐标，先 `mapToLayer` 转图层坐标再调用 |
+| 键盘输入 | `resolve_point(raster, text, role="起点")` | 对话框输入框直接调用，返回 `row/col/cost/blocked` 与中文提示 |
+| 路径节点出图 | `cell_to_map(raster, row, col)` | 路径格点逐个转格心坐标，串成 LineString 顶点 |
+| 图层坐标参考 | `raster["crs"]`、`to_geotransform(raster)` | 输出图层沿用源栅格 CRS，核对像元对齐 |
+
+> 换算层只做定位，不判断是否可通行；是否 NoData 由 `require_passable` 与引擎判定，避免同一规则在两个模块里重复实现。
 
 ## 丙（搜索引擎层）第 1 次进度记录 · 2026-11-16
 
