@@ -247,6 +247,16 @@ print(route.path, route.stats["total_cost"])
 
 **下周重点**：与丙组确认正式单步代价与切角规则，把甲组样例期望值定为全组金标准；把 `neighbor_steps` 接入丙组 Dijkstra / A*；按冻结口径为丁组提供 `path_step_details` 逐段字段，用于矢量图层属性表。
 
+## 乙（成本规则层）第 2 次进度记录 · 2026-11-22
+
+1. 与丙组对齐并冻结当前联调口径：`target`（进入格成本 × 距离系数）、斜向系数 `√2`、起点不计、默认允许切角；`CostConfig` 保留 `average` / 自定义 k / 禁切角开关，老师最终确认后只改配置，不改算法代码。
+2. 补齐分工表第 3、4 条（三角公式与 48m×48m 像元）：`cost_rules.py` 新增 `diagonal_factor_from_pixels()`、`step_length_m()`、`path_length_m()` 与 `PIXEL_SIZE_48M`。48m 正方形像元斜向一步 48√2≈67.88 米，样例路径总长 144√2≈203.65 米；长度只写入丁组矢量图层字段，不乘进成本，避免与金标准冲突。
+3. `golden_cases.py` 增补 48m 长度金标准与结构化样例；`tests/test_cost_rules.py` 由 31 项增至 **37 项**，覆盖三角公式、非正方形像元、长度累加、48 米不影响成本及非法像元。
+4. 以乙组手算解析式复核 `contract.shortest_path`：4×4 默认 `14√2≈19.79899`、含 NoData 样例 `23+4√2≈28.65685`、k=4 时最优路线切换，Dijkstra / A* / 统一接口结果一致。完整手算与对照记录见 [乙组第二次准确性对照](docs/week2-cost-rules-report.md)。
+5. 验证：全仓库 `python -m unittest discover -s tests -q` **89 项全部通过**，`py_compile` 语法检查通过。
+
+**待确认**：对角穿越障碍是否禁切角、最终计费口径（`target` / `average`）；变更只需改 `CostConfig` 并同步丙组与丁组界面。
+
 
 
 
