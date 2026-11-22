@@ -13,17 +13,21 @@ import unittest
 
 from cost_rules import (
     DEFAULT_CONFIG,
+    PIXEL_SIZE_48M,
     SQRT2,
     CostConfig,
     can_step,
+    diagonal_factor_from_pixels,
     distance_factor,
     is_blocked,
     neighbor_steps,
     neighbors,
+    path_length_m,
     path_step_details,
     path_total_cost,
     raster_shape,
     step_cost,
+    step_length_m,
 )
 from golden_cases import (
     EXPECTED_AVERAGE_SQRT2,
@@ -32,6 +36,9 @@ from golden_cases import (
     EXPECTED_DIAGONAL_AT_K4,
     EXPECTED_EDGE_AT_K4,
     EXPECTED_ORTHOGONAL_2X2,
+    EXPECTED_PATH_4X4_LENGTH_M,
+    EXPECTED_STEP_DIAGONAL_M,
+    EXPECTED_STEP_ORTHOGONAL_M,
     EXPECTED_TARGET_SQRT2,
     GRID_2X2,
     GRID_4X4,
@@ -256,6 +263,48 @@ class TestTeamRasterData(unittest.TestCase):
             ),
             23.0 + 4.0 * 4.0,
         )
+
+
+class TestPixel48Meters(unittest.TestCase):
+    """分工表第 4 条：48m × 48m 像元的三角公式与实际长度。"""
+
+    def test_diagonal_factor_from_48m_pixels_is_sqrt2(self):
+        self.assertAlmostEqual(diagonal_factor_from_pixels(), SQRT2)
+        self.assertAlmostEqual(
+            diagonal_factor_from_pixels(PIXEL_SIZE_48M),
+            DEFAULT_CONFIG.diagonal_factor,
+        )
+
+    def test_triangle_formula_with_nonsquare_pixels(self):
+        # 30m × 40m：勾股斜边 50m，相对水平方向的系数 50/30
+        self.assertAlmostEqual(diagonal_factor_from_pixels((30.0, 40.0)), 5.0 / 3.0)
+        self.assertAlmostEqual(step_length_m((0, 0), (1, 1), (30.0, 40.0)), 50.0)
+
+    def test_step_length_matches_hand_calculation(self):
+        self.assertAlmostEqual(
+            step_length_m((0, 0), (0, 1)), EXPECTED_STEP_ORTHOGONAL_M
+        )
+        self.assertAlmostEqual(
+            step_length_m((0, 0), (1, 0)), EXPECTED_STEP_ORTHOGONAL_M
+        )
+        self.assertAlmostEqual(
+            step_length_m((0, 0), (1, 1)), EXPECTED_STEP_DIAGONAL_M
+        )
+
+    def test_path_length_accumulates(self):
+        self.assertAlmostEqual(path_length_m(PATH_4X4), EXPECTED_PATH_4X4_LENGTH_M)
+        self.assertEqual(path_length_m([]), 0.0)
+        self.assertEqual(path_length_m([(1, 1)]), 0.0)
+
+    def test_48m_affects_length_not_cost(self):
+        # 48 米只进长度字段，成本仍按 5/7/8/4 栅格值计费
+        self.assertAlmostEqual(path_total_cost(GRID_4X4, PATH_4X4), EXPECTED_TARGET_SQRT2)
+
+    def test_invalid_pixels_and_nonadjacent_steps_raise(self):
+        with self.assertRaises(ValueError):
+            diagonal_factor_from_pixels((0, 48))
+        with self.assertRaises(ValueError):
+            step_length_m((0, 0), (0, 2))
 
 
 if __name__ == "__main__":
