@@ -2,8 +2,8 @@
 
 用途：四个人按同一套签名并行开发，互不等待。
       cost_rules 的 step_cost / neighbor_steps 是乙组已实现的真实代码，直接给全组用；
-      load_cost_raster / shortest_path / path_to_layer 暂为桩实现，仅返回结构正确的假数据，
-      由甲 / 丙 / 丁各自替换，联调时只换函数体，不动调用方。
+      shortest_path 已由丙组接入真实搜索引擎与乙组邻格接口；
+      load_cost_raster / path_to_layer 仍由甲 / 丁后续替换。
 
 约定
 ----
@@ -21,8 +21,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from cost_rules import DEFAULT_CONFIG, SQRT2, CostConfig, neighbor_steps, step_cost
-from golden_cases import GRID_4X4, PATH_4X4, EXPECTED_TARGET_SQRT2
+from cost_rules import (SQRT2, CostConfig, can_step, cell_value,
+                        distance_factor, neighbor_steps, neighbors,
+                        path_step_details, raster_shape, resolve_config, step_cost)
+from cost_path import CostGrid, find_path
+from golden_cases import GRID_4X4
 
 CONTRACT_VERSION = "0.1"
 
@@ -65,28 +68,65 @@ def load_cost_raster(source: str | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 丙组：最短路径搜索。当前为桩，返回金标准路径与结构完整的假统计。
+# 丙组：真实最短路径搜索，直接消费乙组 neighbor_steps。
 # ---------------------------------------------------------------------------
 def shortest_path(
     cost: object,
     start: tuple[int, int],
     end: tuple[int, int],
     step_cost_fn=step_cost,
-    config: CostConfig = DEFAULT_CONFIG,
+    config: CostConfig = None,
+    algorithm: str = "dijkstra",
 ) -> PathResult:
-    """STUB：Dijkstra / A*，返回 PathResult。由丙组实现。
+    """按乙组 CostConfig 求最优路径，返回全组约定的 PathResult。"""
+    cfg = resolve_config(cost, config)
+    grid = CostGrid.from_raster(cost) if isinstance(cost, dict) else CostGrid(cost, nodata=cfg.nodata)
+    if step_cost_fn is step_cost:
+        provider = lambda cell: neighbor_steps(cost, cell, cfg)
+    else:
+        shape = raster_shape(cost)
 
-    桩实现仅用于丁组提前做出图界面，不保证路径正确。
-    """
-    path = list(PATH_4X4)
+        def provider(cell):
+            out = []
+            for nxt, factor, _diagonal in neighbors(cell, shape, cfg):
+                if not can_step(cost, cell, nxt, cfg):
+                    continue
+                weight = step_cost_fn(cost, cell, nxt, cfg.diagonal_factor)
+                if math.isfinite(weight):
+                    out.append((nxt, weight, factor))
+            return out
+
+    result = find_path(
+        grid, start, end, algorithm=algorithm,
+        diagonal_multiplier=cfg.diagonal_factor,
+        allow_corner_cutting=cfg.allow_corner_cut,
+        cost_mode=cfg.cost_mode,
+        include_start=cfg.include_start,
+        nonpositive_blocked=cfg.nonpositive_blocked,
+        blocked_values=cfg.blocked_values | frozenset({cfg.nodata}),
+        neighbor_provider=provider,
+        heuristic_min_cost=grid.min_cost if step_cost_fn is step_cost else None,
+    )
+    path = list(result.path_cells)
+    if step_cost_fn is step_cost:
+        details = path_step_details(cost, path, cfg)
+    else:
+        details = []
+        cumulative = cell_value(cost, start) if cfg.include_start else 0.0
+        for a, b, weight in zip(path, path[1:], result.step_costs):
+            cumulative += weight
+            details.append({
+                "from": a, "to": b, "step_cost": weight,
+                "factor": distance_factor(a, b, cfg), "cumulative": cumulative,
+            })
     stats = {
-        "total_cost": EXPECTED_TARGET_SQRT2,
-        "length": 3 * SQRT2,
+        "total_cost": result.total_cost,
+        "length": result.length_cells,
         "steps": len(path) - 1,
-        "expanded": 0,
-        "elapsed_ms": 0.0,
-        "step_details": [],
-        "stub": True,
+        "expanded": result.expanded_nodes,
+        "elapsed_ms": result.elapsed_ms,
+        "step_details": details,
+        "algorithm": algorithm,
     }
     return PathResult(path=path, stats=stats)
 
@@ -144,4 +184,4 @@ if __name__ == "__main__":
     print("路径:", result.path)
     print("总成本:", round(result.stats["total_cost"], 6))
     print("图层字段:", layer["fields"])
-    print("注意：除 step_cost 外均为 STUB，联调时替换。")
+    print("注意：输入与图层输出仍为 STUB，搜索为真实结果。")

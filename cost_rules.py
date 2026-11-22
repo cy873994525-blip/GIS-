@@ -33,11 +33,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Any, Iterable
+from typing import Any, Iterable, Tuple
 
 SQRT2 = math.sqrt(2.0)
 
-Cell = tuple[int, int]
+Cell = Tuple[int, int]
 Raster = Any  # list[list[float]] | tuple | numpy.ndarray，统一用 cost[r][c] 访问
 
 

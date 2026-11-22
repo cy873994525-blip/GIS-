@@ -7,6 +7,10 @@ from pathlib import Path
 
 from cost_path import CostGrid, NoRouteError, find_path
 from cost_raster import is_nodata, load_raster_file
+from cost_rules import CostConfig, path_total_cost
+from contract import shortest_path
+from golden_cases import (EXPECTED_AVERAGE_SQRT2, EXPECTED_TARGET_SQRT2,
+                          EXPECTED_TEAM_TARGET_SQRT2, GRID_4X4, PATH_4X4)
 
 
 def bellman_ford_reference(rows, start, goal, diagonal_multiplier=math.sqrt(2)):
@@ -37,6 +41,38 @@ def bellman_ford_reference(rows, start, goal, diagonal_multiplier=math.sqrt(2)):
 
 
 class CostPathTests(unittest.TestCase):
+    def test_b_group_golden_cases_and_contract(self):
+        for algorithm in ("dijkstra", "astar"):
+            with self.subTest(algorithm=algorithm):
+                direct = find_path(GRID_4X4, (0, 0), (3, 3), algorithm=algorithm)
+                joined = shortest_path(GRID_4X4, (0, 0), (3, 3), algorithm=algorithm)
+                self.assertEqual(list(direct.path_cells), PATH_4X4)
+                self.assertEqual(joined.path, PATH_4X4)
+                self.assertAlmostEqual(direct.total_cost, EXPECTED_TARGET_SQRT2)
+                self.assertAlmostEqual(joined.stats["total_cost"], EXPECTED_TARGET_SQRT2)
+                self.assertEqual(joined.stats["steps"], 3)
+                self.assertEqual(len(joined.stats["step_details"]), 3)
+                self.assertAlmostEqual(joined.stats["step_details"][-1]["cumulative"],
+                                       EXPECTED_TARGET_SQRT2)
+                average = shortest_path(
+                    GRID_4X4, (0, 0), (3, 3),
+                    config=CostConfig(cost_mode="average"), algorithm=algorithm)
+                self.assertAlmostEqual(average.stats["total_cost"], EXPECTED_AVERAGE_SQRT2)
+
+    def test_contract_config_and_input_errors(self):
+        grid = [[1, 2], [2, 1]]
+        for algorithm in ("dijkstra", "astar"):
+            result = shortest_path(grid, (0, 0), (1, 1),
+                                   config=CostConfig(diagonal_factor=4), algorithm=algorithm)
+            self.assertEqual(result.stats["total_cost"], 3)
+            self.assertEqual(result.stats["steps"], 2)
+        with self.assertRaises(ValueError):
+            shortest_path(grid, (-1, 0), (1, 1))
+        with self.assertRaises(ValueError):
+            shortest_path(grid, (0, 0), (2, 0))
+        with self.assertRaises(NoRouteError):
+            shortest_path([[1, -9999, 1]], (0, 0), (0, 2))
+
     def test_a_group_rasterdata_and_common_samples(self):
         root = Path(__file__).resolve().parents[1]
         for name in ("cost_grid_4x4.json", "cost_grid_5x5.json"):
@@ -45,12 +81,13 @@ class CostPathTests(unittest.TestCase):
                 rows = [[None if is_nodata(raster, row, col) else raster["values"][row][col]
                          for col in range(raster["cols"])] for row in range(raster["rows"])]
                 start, goal = (0, 0), (raster["rows"] - 1, raster["cols"] - 1)
-                expected = bellman_ford_reference(rows, start, goal)
-                self.assertIsNotNone(expected)
                 original_values = [row[:] for row in raster["values"]]
                 for algorithm in ("dijkstra", "astar"):
                     result = find_path(raster, start, goal, algorithm=algorithm)
-                    self.assertTrue(math.isclose(result.total_cost, expected, rel_tol=1e-10))
+                    if name == "cost_grid_4x4.json":
+                        self.assertAlmostEqual(result.total_cost, EXPECTED_TEAM_TARGET_SQRT2)
+                    self.assertAlmostEqual(result.total_cost,
+                                           path_total_cost(raster, result.path_cells))
                     self.assertTrue(all(not is_nodata(raster, *cell) for cell in result.path_cells))
                 self.assertEqual(raster["values"], original_values)
 
@@ -59,19 +96,20 @@ class CostPathTests(unittest.TestCase):
         expected = (5 + 4) / 2 * math.sqrt(2)
         for algorithm in ("dijkstra", "astar"):
             with self.subTest(algorithm=algorithm):
-                result = find_path(grid, (0, 0), (1, 1), algorithm=algorithm)
+                result = find_path(grid, (0, 0), (1, 1), algorithm=algorithm,
+                                   cost_mode="average")
                 self.assertEqual(result.path_cells, ((0, 0), (1, 1)))
                 self.assertAlmostEqual(result.total_cost, expected)
                 self.assertEqual(len(result.step_costs), 1)
                 self.assertAlmostEqual(result.length_cells, math.sqrt(2))
                 self.assertEqual(result.to_dict()["path_cells"], [[0, 0], [1, 1]])
 
-    def test_corner_cutting_default_is_forbidden(self):
+    def test_corner_cutting_is_configurable(self):
         grid = [[1, None], [1, 1]]
-        result = find_path(grid, (0, 0), (1, 1))
+        result = find_path(grid, (0, 0), (1, 1), allow_corner_cutting=False)
         self.assertEqual(result.path_cells, ((0, 0), (1, 0), (1, 1)))
         self.assertEqual(result.total_cost, 2.0)
-        allowed = find_path(grid, (0, 0), (1, 1), allow_corner_cutting=True)
+        allowed = find_path(grid, (0, 0), (1, 1))
         self.assertEqual(allowed.path_cells, ((0, 0), (1, 1)))
         self.assertAlmostEqual(allowed.total_cost, math.sqrt(2))
 
@@ -86,10 +124,11 @@ class CostPathTests(unittest.TestCase):
     def test_zero_cost_and_same_cell(self):
         grid = CostGrid([[0, 0], [0, 0]])
         for algorithm in ("dijkstra", "astar"):
-            result = find_path(grid, (0, 0), (1, 1), algorithm=algorithm)
+            result = find_path(grid, (0, 0), (1, 1), algorithm=algorithm,
+                               nonpositive_blocked=False)
             self.assertEqual(result.total_cost, 0)
             self.assertEqual(sum(result.step_costs), 0)
-        same = find_path(grid, (1, 1), (1, 1))
+        same = find_path(grid, (1, 1), (1, 1), nonpositive_blocked=False)
         self.assertEqual(same.path_cells, ((1, 1),))
         self.assertEqual(same.step_costs, ())
         self.assertEqual(same.length_cells, 0)
@@ -103,7 +142,7 @@ class CostPathTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             find_path([[1, None]], (0, 0), (0, 1))
         with self.assertRaises(ValueError):
-            find_path([[1]], (0, 0), (0, 0), diagonal_multiplier=0.9)
+            find_path([[1]], (0, 0), (0, 0), diagonal_multiplier=0)
         with self.assertRaises(ValueError):
             find_path([[1]], (0, 0), (0, 0), algorithm="unknown")
         with self.assertRaises(ValueError):
@@ -123,10 +162,14 @@ class CostPathTests(unittest.TestCase):
                         if expected is None:
                             with self.assertRaises(NoRouteError):
                                 find_path(rows, (0, 0), (3, 3), algorithm=algorithm,
-                                          diagonal_multiplier=multiplier)
+                                          diagonal_multiplier=multiplier,
+                                          cost_mode="average", allow_corner_cutting=False,
+                                          nonpositive_blocked=False)
                             continue
                         result = find_path(rows, (0, 0), (3, 3), algorithm=algorithm,
-                                           diagonal_multiplier=multiplier)
+                                           diagonal_multiplier=multiplier,
+                                           cost_mode="average", allow_corner_cutting=False,
+                                           nonpositive_blocked=False)
                         self.assertTrue(math.isclose(result.total_cost, expected, rel_tol=1e-10))
                         self.assertTrue(math.isclose(sum(result.step_costs), expected, rel_tol=1e-10))
                         self.assertEqual(result.path_cells[0], (0, 0))

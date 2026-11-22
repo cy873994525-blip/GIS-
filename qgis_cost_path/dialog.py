@@ -200,10 +200,10 @@ class CostPathDialog(QDialog):
             self.table.setColumnCount(raster["cols"])
             for row, values in enumerate(raster["values"]):
                 for col, value in enumerate(values):
-                    blocked = is_nodata(raster, row, col)
+                    blocked = self.is_blocked_cell(row, col)
                     item = QTableWidgetItem("×" if blocked else "{:.6g}".format(value))
                     item.setTextAlignment(Qt.AlignCenter)
-                    item.setToolTip("{} {}".format(cell_label((row, col)), "NoData" if blocked else value))
+                    item.setToolTip("{} {}".format(cell_label((row, col)), "不可通行" if blocked else value))
                     self.table.setItem(row, col, item)
                     self.paint_cell((row, col))
                     if not blocked:
@@ -212,14 +212,18 @@ class CostPathDialog(QDialog):
                         self.goal = (row, col)
         finally:
             self.table.setUpdatesEnabled(True)
-        self.source.setText("{}  ·  {} × {}  ·  × NoData".format(
+        self.source.setText("{}  ·  {} × {}  ·  × 不可通行".format(
             source_name, raster["rows"], raster["cols"]))
         self.calculate()
+
+    def is_blocked_cell(self, row, col):
+        return (is_nodata(self.raster, row, col)
+                or self.raster["values"][row][col] <= 0)
 
     def paint_cell(self, cell):
         row, col = cell
         item = self.table.item(row, col)
-        if is_nodata(self.raster, row, col):
+        if self.is_blocked_cell(row, col):
             background, foreground = "#4c5b57", "#ffffff"
         elif cell == self.start:
             background, foreground = START_COLOR, "#ffffff"
@@ -235,8 +239,8 @@ class CostPathDialog(QDialog):
     def pick_cell(self, row, col):
         if self.raster is None:
             return
-        if is_nodata(self.raster, row, col):
-            self.status.setText("格子 {} 为 NoData，不可通行。".format(cell_label((row, col))))
+        if self.is_blocked_cell(row, col):
+            self.status.setText("格子 {} 不可通行。".format(cell_label((row, col))))
             self.status.show()
             return
         if self.pick_start.isChecked():

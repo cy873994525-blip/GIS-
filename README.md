@@ -203,7 +203,30 @@ result = find_path(raster, (0, 0), (3, 3), algorithm="dijkstra")
 print(result.to_dict())
 ```
 
-**下周重点**：丙与乙确认正式逐步成本和切角规则，把甲组样例的期望结果定为手算金标准；与甲继续对接坐标转行列接口。后续再由丁把路径格点转换为地图坐标与矢量图层。当前仓库还不是可直接安装的完整插件。
+**第一周时的下一步**：丙与乙对齐逐步成本和切角规则，把甲组样例的期望结果定为手算金标准；与甲继续对接坐标转行列接口。这些工作中的规则与金标准已在下方第二次进度完成。第一周使用的均值成本及禁切角默认值仅作历史基线。
+
+## 丙（搜索引擎层）第 2 次进度记录 · 2026-11-22
+
+1. 核对了甲组的 `cost_raster.py` / `coord_transform.py`、乙组的 `cost_rules.py` / `golden_cases.py`、丁组的 QGIS 插件入口和内置 10×10 演示。搜索引擎默认规则现与乙组 `CostConfig` 对齐：进入格计费、斜向系数 `√2`、起点不计费、允许切角、非正值和 NoData 不可通行。`average`、禁切角、起点计费等可由参数切换。**这是当前团队联调口径，尚待老师最终确认。**
+2. `contract.shortest_path` 从占位实现改为真实 Dijkstra / A*，直接消费乙组 `neighbor_steps`，返回路径、总成本、长度、步数、扩展节点、耗时和乙组逐段明细。独立 `find_path` 仍供丁组已有插件调用，调用默认值已经对齐。修复乙组类型别名在项目使用的 Python 3.8 上无法导入的问题。
+3. 接入乙组手算金标准：4×4 默认路径成本 `14√2 ≈ 19.799`；甲组含 NoData 的 4×4 样例为 `23+4√2 ≈ 28.657`。Dijkstra、A* 和统一接口均通过核验；全量自动化测试见下文命令。
+4. 用新口径重新测试 100² / 500² / 1000² 均一和随机栅格，记录准确性、扩展节点及速度。详见 [第二次联调与测试记录](docs/week2-report.md) 和 [机器可读结果](benchmarks/week2-2026-11-22.json)。第一周的均值口径报告保留，不能直接拿其成本数字比较。
+
+```powershell
+python -m unittest discover -s tests -q
+python benchmarks/run.py --output benchmarks/week2-2026-11-22.json
+```
+
+```python
+from cost_raster import load_raster_file
+from contract import shortest_path
+
+raster = load_raster_file("sample_data/cost_grid_4x4.json")
+route = shortest_path(raster, (0, 0), (3, 3), algorithm="astar")
+print(route.path, route.stats["total_cost"])
+```
+
+丁组 QGIS 网格窗口会随新引擎采用本次统一默认规则；先前 10×10 演示的 `55.60` 是旧口径记录，需在 QGIS 中按本次提交重新核对。地图坐标输入、真实底图上的 LineString 与端点矢量层仍是丁组后续集成任务。
 
 ## 乙（成本规则层）第 1 次进度记录 · 2026-11-16
 
@@ -211,7 +234,7 @@ print(result.to_dict())
 2. 成本规则全部参数化（见 `CostConfig`），四人碰头后改配置即可冻结口径，不必改算法：8 邻域、正交系数 1 / 斜向系数 k（默认 `√2`）；单步代价两种口径可切换——`target`（进入格成本 × 距离系数，乙组默认）与 `average`（两格成本均值 × 距离系数）；起点格是否计入、是否允许穿越障碍拐角（切角）、NoData / 非正值 / 自定义值视为障碍。不可通行的一步返回 `math.inf` 而非抛异常，搜索层可直接跳过。
 3. 兼容甲组数据结构：`cost_rules` 直接接收 `cost_raster.py` 返回的 `RasterData` 字典（含 `values` / `nodata`），自动采用其中的 nodata 值，调用方无需手工拆出 `values`；同时也接受裸二维矩阵（list / numpy 数组）。
 4. 新增 `golden_cases.py`：所有期望值由解析式手算给出，不从本项目算法反推，避免循环验证，供丙组校验 Dijkstra / A*。含自建 4×4 样例（默认口径对角路径 `14√2 ≈ 19.799`，average 口径 `14.5√2 ≈ 20.506`）、甲组通用 4×4 样例（含 NoData，最优路径 `(0,0)→(1,0)→(2,0)→(3,1)→(3,2)→(3,3)`，总成本 `23+4√2 ≈ 28.657`）、2×2 斜向系数生效样例（k=`√2` 时对角 1.414 < 正交 3；k=4 时对角 4 > 正交 3）及障碍 / 切角样例。
-5. 新增 `contract.py`：全组接口契约草案（v0.1），已对齐甲组 `RasterData` 结构；`step_cost` / `neighbor_steps` 为乙组真实实现，其余三个函数仍为桩，联调时只换函数体不动调用方。
+5. 新增 `contract.py`：全组接口契约草案（v0.1），已对齐甲组 `RasterData` 结构；`step_cost` / `neighbor_steps` 为乙组真实实现。本段为第一周原始记录；`shortest_path` 已在丙组第二次进度接入真实搜索，`load_cost_raster` 与 `path_to_layer` 示例接口仍为桩。
 6. 新增 `tests/test_cost_rules.py`：31 项单元测试，覆盖邻域生成、斜向系数、两种代价口径、逐格累加、NoData / 障碍 / 切角、起点计入开关、越界与不相邻异常，并含 5 项与甲组 `RasterData` 结构的对接用例。运行：
 
    ```powershell

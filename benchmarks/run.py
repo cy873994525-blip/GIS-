@@ -8,6 +8,7 @@ import random
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cost_path import CostGrid, find_path
 
 
@@ -32,6 +33,9 @@ def main():
     parser.add_argument("--sizes", type=int, nargs="+", default=[100, 500, 1000])
     parser.add_argument("--seed", type=int, default=20261116)
     parser.add_argument("--terrain", choices=("both", "uniform", "random"), default="both")
+    parser.add_argument("--cost-mode", choices=("target", "average"), default="target")
+    parser.add_argument("--no-corner-cut", action="store_true",
+                        help="禁止斜向穿过障碍拐角；默认按乙组规则允许切角")
     parser.add_argument("--output", type=Path, help="可选：将结果写入 JSON 文件")
     args = parser.parse_args()
     if any(size < 2 for size in args.sizes):
@@ -45,7 +49,9 @@ def main():
             start, goal = (0, 0), (size - 1, size - 1)
             results = {}
             for algorithm in ("dijkstra", "astar"):
-                result = find_path(grid, start, goal, algorithm=algorithm)
+                result = find_path(grid, start, goal, algorithm=algorithm,
+                                   cost_mode=args.cost_mode,
+                                   allow_corner_cutting=not args.no_corner_cut)
                 results[algorithm] = result
                 record = {
                     "terrain": terrain,
@@ -65,6 +71,11 @@ def main():
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps({"seed": args.seed,
+                                          "cost_mode": args.cost_mode,
+                                          "diagonal_factor": math.sqrt(2),
+                                          "include_start": False,
+                                          "allow_corner_cut": not args.no_corner_cut,
+                                          "nonpositive_blocked": True,
                                           "python": sys.version.split()[0],
                                           "platform": platform.platform(),
                                           "records": records},

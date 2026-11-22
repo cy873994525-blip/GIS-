@@ -1,0 +1,132 @@
+{
+  "seed": 20261116,
+  "cost_mode": "target",
+  "diagonal_factor": 1.4142135623730951,
+  "include_start": false,
+  "allow_corner_cut": true,
+  "nonpositive_blocked": true,
+  "python": "3.8.8",
+  "platform": "Windows-10-10.0.26100-SP0",
+  "records": [
+    {
+      "terrain": "uniform",
+      "size": 100,
+      "cells": 10000,
+      "algorithm": "dijkstra",
+      "total_cost": 140.00714267,
+      "path_nodes": 100,
+      "expanded_nodes": 10000,
+      "elapsed_ms": 46.871
+    },
+    {
+      "terrain": "uniform",
+      "size": 100,
+      "cells": 10000,
+      "algorithm": "astar",
+      "total_cost": 140.00714267,
+      "path_nodes": 100,
+      "expanded_nodes": 100,
+      "elapsed_ms": 1.071
+    },
+    {
+      "terrain": "random",
+      "size": 100,
+      "cells": 10000,
+      "algorithm": "dijkstra",
+      "total_cost": 406.07315985,
+      "path_nodes": 135,
+      "expanded_nodes": 9544,
+      "elapsed_ms": 48.172
+    },
+    {
+      "terrain": "random",
+      "size": 100,
+      "cells": 10000,
+      "algorithm": "astar",
+      "total_cost": 406.07315985,
+      "path_nodes": 135,
+      "expanded_nodes": 9542,
+      "elapsed_ms": 48.269
+    },
+    {
+      "terrain": "uniform",
+      "size": 500,
+      "cells": 250000,
+      "algorithm": "dijkstra",
+      "total_cost": 705.69256762,
+      "path_nodes": 500,
+      "expanded_nodes": 250000,
+      "elapsed_ms": 1244.869
+    },
+    {
+      "terrain": "uniform",
+      "size": 500,
+      "cells": 250000,
+      "algorithm": "astar",
+      "total_cost": 705.69256762,
+      "path_nodes": 500,
+      "expanded_nodes": 500,
+      "elapsed_ms": 4.993
+    },
+    {
+      "terrain": "random",
+      "size": 500,
+      "cells": 250000,
+      "algorithm": "dijkstra",
+      "total_cost": 1917.81450071,
+      "path_nodes": 702,
+      "expanded_nodes": 237530,
+      "elapsed_ms": 1221.795
+    },
+    {
+      "terrain": "random",
+      "size": 500,
+      "cells": 250000,
+      "algorithm": "astar",
+      "total_cost": 1917.81450071,
+      "path_nodes": 702,
+      "expanded_nodes": 237511,
+      "elapsed_ms": 1248.434
+    },
+    {
+      "terrain": "uniform",
+      "size": 1000,
+      "cells": 1000000,
+      "algorithm": "dijkstra",
+      "total_cost": 1412.79934881,
+      "path_nodes": 1000,
+      "expanded_nodes": 1000000,
+      "elapsed_ms": 5238.67
+    },
+    {
+      "terrain": "uniform",
+      "size": 1000,
+      "cells": 1000000,
+      "algorithm": "astar",
+      "total_cost": 1412.79934881,
+      "path_nodes": 1000,
+      "expanded_nodes": 1000,
+      "elapsed_ms": 9.746
+    },
+    {
+      "terrain": "random",
+      "size": 1000,
+      "cells": 1000000,
+      "algorithm": "dijkstra",
+      "total_cost": 3869.1142828,
+      "path_nodes": 1437,
+      "expanded_nodes": 950013,
+      "elapsed_ms": 5263.04
+    },
+    {
+      "terrain": "random",
+      "size": 1000,
+      "cells": 1000000,
+      "algorithm": "astar",
+      "total_cost": 3869.1142828,
+      "path_nodes": 1435,
+      "expanded_nodes": 950012,
+      "elapsed_ms": 5497.91
+    }
+  ]
+}

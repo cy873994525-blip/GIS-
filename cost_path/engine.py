@@ -1,7 +1,7 @@
 """C 组搜索引擎：Dijkstra 与 A*，不依赖 GIS 软件或栅格文件格式。
 
 可直接接收甲组的 RasterData 字典，也可接收 rows[row][col] 成本数组。
-乙组可传入 step_cost(from_cost, to_cost, movement_factor) 覆盖默认边权。
+默认规则与乙组 CostConfig 对齐；团队接口可直接使用乙组 neighbor_steps。
 丁组将返回的 path_cells 映射到栅格中心坐标，制作矢量图层。
 """
 
@@ -131,46 +131,84 @@ def _heuristic(row, col, goal_row, goal_col, min_cost, diagonal_multiplier):
 
 
 def find_path(grid, start, goal, *, algorithm="dijkstra",
-              diagonal_multiplier=SQRT2, allow_corner_cutting=False,
-              step_cost=None):
+              diagonal_multiplier=SQRT2, allow_corner_cutting=True,
+              cost_mode="target", include_start=False,
+              nonpositive_blocked=True, blocked_values=(),
+              step_cost=None, neighbor_provider=None, heuristic_min_cost=None):
     """计算包含起终点的最小成本路径。
 
-    默认边权 = (出发格成本 + 到达格成本)/2 × 移动系数；正交系数 1，
-    斜向系数 diagonal_multiplier。乙组可提供同签名的 step_cost 回调。
-    自定义边权时 A* 自动使用零启发式，以确保在非负边权下仍得到最优解。
-    禁止切角时，斜移要求相邻的两个正交格均可通行。
+    默认边权 = 进入格成本 × 移动系数，与乙组默认 CostConfig 一致。
+    cost_mode="average" 时为相邻两格均值 × 移动系数。
+    乙组可通过 neighbor_provider(cell) 提供 [(邻格, 边权, 系数)]；
+    此时使用乙组过滤后的邻格，A* 默认零启发式以保证最优性。
+    heuristic_min_cost 只供已证明边权下界的邻格提供方使用。
+    step_cost 为兼容第一周的三参数回调 (from_cost, to_cost, factor)。
 
     elapsed_ms 仅统计搜索与路径回溯；CostGrid 构造耗时不计入。
     """
     if isinstance(grid, dict):
         grid = CostGrid.from_raster(grid)
     elif not isinstance(grid, CostGrid):
-        grid = CostGrid(grid)
+        grid = CostGrid(grid, nodata=-9999.0)
     if algorithm not in ("dijkstra", "astar"):
         raise ValueError("algorithm 只能是 dijkstra 或 astar")
     try:
         diagonal_multiplier = float(diagonal_multiplier)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("斜向系数必须是大于等于 1 的有限数") from exc
-    if not math.isfinite(diagonal_multiplier) or diagonal_multiplier < 1:
-        raise ValueError("斜向系数必须是大于等于 1 的有限数")
+        raise ValueError("斜向系数必须是大于 0 的有限数") from exc
+    if not math.isfinite(diagonal_multiplier) or diagonal_multiplier <= 0:
+        raise ValueError("斜向系数必须是大于 0 的有限数")
+    if cost_mode not in ("target", "average"):
+        raise ValueError("cost_mode 只能是 target 或 average")
     if step_cost is not None and not callable(step_cost):
         raise ValueError("step_cost 必须是可调用的三参数函数")
+    if neighbor_provider is not None and not callable(neighbor_provider):
+        raise ValueError("neighbor_provider 必须是可调用的邻格函数")
+    if step_cost is not None and neighbor_provider is not None:
+        raise ValueError("step_cost 和 neighbor_provider 不能同时提供")
+    try:
+        blocked_values = frozenset(float(value) for value in blocked_values)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("blocked_values 必须是有限数值集合") from exc
+    if any(not math.isfinite(value) for value in blocked_values):
+        raise ValueError("blocked_values 必须是有限数值集合")
+    if heuristic_min_cost is not None:
+        try:
+            heuristic_min_cost = float(heuristic_min_cost)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("heuristic_min_cost 必须是有限非负数") from exc
+        if not math.isfinite(heuristic_min_cost) or heuristic_min_cost < 0:
+            raise ValueError("heuristic_min_cost 必须是有限非负数")
+
+    size = grid.height * grid.width
+    blocked = bytearray(size)
+    min_passable_cost = math.inf
+    for index, value in enumerate(grid.values):
+        if value < 0 or value in blocked_values or nonpositive_blocked and value <= 0:
+            blocked[index] = 1
+        elif value < min_passable_cost:
+            min_passable_cost = value
 
     source = _cell_index(grid, start, "起点")
     target = _cell_index(grid, goal, "终点")
+    if blocked[source] or blocked[target]:
+        raise ValueError("起点或终点位于不可通行的格子")
     width = grid.width
     goal_row, goal_col = divmod(target, width)
-    heuristic_scale = grid.min_cost if algorithm == "astar" and step_cost is None else 0.0
-    size = grid.height * width
+    heuristic_scale = 0.0
+    if algorithm == "astar" and diagonal_multiplier >= 1:
+        if neighbor_provider is not None:
+            heuristic_scale = heuristic_min_cost or 0.0
+        elif step_cost is None:
+            heuristic_scale = min_passable_cost
     distances = array("d", [math.inf]) * size
     parents = array("i", [-1]) * size
     parent_edges = array("d", [0.0]) * size
     visited = bytearray(size)
-    distances[source] = 0.0
+    distances[source] = grid.values[source] if include_start else 0.0
     initial_h = _heuristic(start[0], start[1], goal_row, goal_col,
                            heuristic_scale, diagonal_multiplier)
-    frontier = [(initial_h, 0.0, source)]
+    frontier = [(distances[source] + initial_h, distances[source], source)]
     expanded_nodes = 0
     started = perf_counter()
 
@@ -184,20 +222,51 @@ def find_path(grid, start, goal, *, algorithm="dijkstra",
             break
         row, col = divmod(current, width)
         from_cost = grid.values[current]
+        if neighbor_provider is not None:
+            for next_cell, edge, _factor in neighbor_provider((row, col)):
+                if (not isinstance(next_cell, (tuple, list)) or len(next_cell) != 2
+                        or any(isinstance(value, bool) or not isinstance(value, int)
+                               for value in next_cell)):
+                    raise ValueError("neighbor_provider 返回了非法邻格")
+                next_row, next_col = next_cell
+                if (not (0 <= next_row < grid.height and 0 <= next_col < width)
+                        or max(abs(next_row - row), abs(next_col - col)) != 1):
+                    raise ValueError("neighbor_provider 返回了越界或不相邻的格子")
+                next_index = next_row * width + next_col
+                if blocked[next_index] or visited[next_index]:
+                    continue
+                try:
+                    edge = float(edge)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError("neighbor_provider 必须返回有限非负边权") from exc
+                if not math.isfinite(edge) or edge < 0:
+                    raise ValueError("neighbor_provider 必须返回有限非负边权")
+                candidate = current_cost + edge
+                if not math.isfinite(candidate):
+                    raise ValueError("累计成本溢出；请检查输入成本")
+                if candidate < distances[next_index]:
+                    distances[next_index] = candidate
+                    parents[next_index] = current
+                    parent_edges[next_index] = edge
+                    estimate = _heuristic(next_row, next_col, goal_row, goal_col,
+                                          heuristic_scale, diagonal_multiplier)
+                    heapq.heappush(frontier, (candidate + estimate, candidate, next_index))
+            continue
         for row_step, col_step in NEIGHBORS:
             next_row, next_col = row + row_step, col + col_step
             if not (0 <= next_row < grid.height and 0 <= next_col < width):
                 continue
             next_index = next_row * width + next_col
             to_cost = grid.values[next_index]
-            if to_cost < 0 or visited[next_index]:
+            if blocked[next_index] or visited[next_index]:
                 continue
             diagonal = row_step != 0 and col_step != 0
             if diagonal and not allow_corner_cutting:
-                if grid.values[row * width + next_col] < 0 or grid.values[next_row * width + col] < 0:
+                if blocked[row * width + next_col] or blocked[next_row * width + col]:
                     continue
             factor = diagonal_multiplier if diagonal else 1.0
-            edge = ((from_cost + to_cost) * 0.5 * factor if step_cost is None
+            edge = ((to_cost if cost_mode == "target" else (from_cost + to_cost) * 0.5) * factor
+                    if step_cost is None
                     else step_cost(from_cost, to_cost, factor))
             if isinstance(edge, bool):
                 raise ValueError("step_cost 必须返回有限非负数")
