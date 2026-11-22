@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 
-from cost_rules import SQRT2, Cell
+from cost_rules import PIXEL_SIZE_48M, SQRT2, Cell
 
 NODATA = -9999.0
 
@@ -81,6 +81,12 @@ EXPECTED_TARGET_SQRT2 = 14.0 * SQRT2          # 19.79898987322333
 EXPECTED_AVERAGE_SQRT2 = 14.5 * SQRT2         # 20.50609665440988
 EXPECTED_DIAGONAL_AT_K4 = 14.0 * 4.0          # 56.0
 EXPECTED_EDGE_AT_K4 = 31.0                    # 7+8+4+4+4+4
+
+# ---- 48m × 48m 像元的三角公式与地面长度（手算） -----------------------------
+# 斜边 = sqrt(48² + 48²) = 48*sqrt(2) ≈ 67.88225099 米
+EXPECTED_STEP_ORTHOGONAL_M = 48.0
+EXPECTED_STEP_DIAGONAL_M = 48.0 * SQRT2
+EXPECTED_PATH_4X4_LENGTH_M = 3.0 * 48.0 * SQRT2  # 三段对角，≈ 203.64675298 米
 
 # ---- 斜向系数是否生效的最小样例 -------------------------------------------
 GRID_2X2: list[list[float]] = [[1.0, 2.0], [2.0, 1.0]]
@@ -136,6 +142,14 @@ def golden_cases() -> dict:
             "expected_target": EXPECTED_TEAM_TARGET_SQRT2,
             "nodata_cell": (1, 1),
         },
+        "pixel_48m": {
+            "pixel_size": PIXEL_SIZE_48M,
+            "path": PATH_4X4,
+            "expected_diagonal_factor": SQRT2,
+            "expected_step_orthogonal_m": EXPECTED_STEP_ORTHOGONAL_M,
+            "expected_step_diagonal_m": EXPECTED_STEP_DIAGONAL_M,
+            "expected_path_length_m": EXPECTED_PATH_4X4_LENGTH_M,
+        },
     }
 
 
@@ -145,3 +159,5 @@ if __name__ == "__main__":
     print("14*sqrt(2) =", 14 * math.sqrt(2))
     print("14.5*sqrt(2) =", 14.5 * math.sqrt(2))
     print("23+4*sqrt(2) =", 23 + 4 * math.sqrt(2))
+    print("48m*sqrt(2) =", 48 * math.sqrt(2), "米")
+    print("3*48*sqrt(2) =", 3 * 48 * math.sqrt(2), "米")

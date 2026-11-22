@@ -9,6 +9,9 @@
     neighbor_steps(cost, cell, cfg)       -> [(next, w, f)] 供丙组 Dijkstra / A* 遍历
     path_total_cost(cost, path, cfg)      -> float          沿给定路径累加总成本
     path_step_details(cost, path, cfg)    -> list[dict]     逐段明细，供丁组写矢量图层字段
+    diagonal_factor_from_pixels(size)     -> float          勾股定理算斜向系数（48m×48m -> √2）
+    step_length_m(a, b, size)             -> float          单步实际长度（米）
+    path_length_m(path, size)             -> float          整条路径实际长度（米）
 
 成本口径（全部可配置，见 CostConfig）
 -----------------------------------
@@ -25,8 +28,17 @@
     * 裸二维矩阵：list[list[float]]、tuple 或 numpy 二维数组
 传入 RasterData 时会自动采用其中的 nodata 值，无需手工拆 values。
 
-待四人碰头确认后冻结：斜向系数 k 的具体取值、target 还是 average。
-在此之前两种口径都已实现并各有金标准，切换只需改 CostConfig。
+48m × 48m 像元（分工表第 4 条）
+-------------------------------
+    diagonal_factor_from_pixels() 用勾股定理由像元边长算斜向系数；
+    step_length_m() / path_length_m() 给出单步与整条路径的实际地面长度（米）。
+    计费仍按「栅格成本值 × 距离系数」，长度字段与计费口径相互独立，
+    不把 48 米乘进总成本，避免与全组已冻结的金标准冲突。
+
+口径状态（2026-11-22 联调冻结）
+-------------------------------
+    斜向系数 √2、target（进入格计费）、起点不计、允许切角。
+    average / k=4 / 禁切角等仍可切换，供老师最终确认后改 CostConfig，不改算法。
 """
 
 from __future__ import annotations
@@ -38,6 +50,8 @@ from typing import Any, Iterable, Tuple
 SQRT2 = math.sqrt(2.0)
 
 Cell = Tuple[int, int]
+PixelSize = Tuple[float, float]  # (sx, sy)，用 typing.Tuple 兼容 Python 3.8
+PIXEL_SIZE_48M: PixelSize = (48.0, 48.0)  # 分工表给定的课程栅格像元边长（米）
 Raster = Any  # list[list[float]] | tuple | numpy.ndarray，统一用 cost[r][c] 访问
 
 
@@ -135,6 +149,43 @@ def is_diagonal(a: Cell, b: Cell) -> bool:
 def distance_factor(a: Cell, b: Cell, config: CostConfig = DEFAULT_CONFIG) -> float:
     """正交返回 1.0，斜向返回 k。"""
     return config.diagonal_factor if is_diagonal(a, b) else 1.0
+
+
+def diagonal_factor_from_pixels(pixel_size: PixelSize = PIXEL_SIZE_48M) -> float:
+    """三角公式：斜向系数 = 斜边长 / 水平正交边长 = hypot(sx, sy) / sx。
+
+    分工表给定 48m × 48m 像元，正方形时结果恰为 √2，
+    与 CostConfig.diagonal_factor 的默认值一致；非正方形像元时
+    给出相对水平方向的系数。sx / sy 必须为正数。
+    """
+    sx, sy = float(pixel_size[0]), float(pixel_size[1])
+    if sx <= 0 or sy <= 0:
+        raise ValueError(f"像元边长必须为正数: {pixel_size}")
+    return math.hypot(sx, sy) / sx
+
+
+def step_length_m(a: Cell, b: Cell, pixel_size: PixelSize = PIXEL_SIZE_48M) -> float:
+    """单步地面长度（米）：正交取对应方向的像元边长，斜向取勾股定理斜边。
+
+    仅用于丁组矢量图层的 length / 里程字段，不参与成本累加。
+    """
+    if not is_adjacent(a, b):
+        raise ValueError(f"两格不相邻: {a} -> {b}")
+    sx, sy = float(pixel_size[0]), float(pixel_size[1])
+    if sx <= 0 or sy <= 0:
+        raise ValueError(f"像元边长必须为正数: {pixel_size}")
+    dr, dc = abs(a[0] - b[0]), abs(a[1] - b[1])
+    if dr and dc:
+        return math.hypot(dc * sx, dr * sy)
+    return dr * sy if dr else dc * sx
+
+
+def path_length_m(
+    path: Iterable[Cell], pixel_size: PixelSize = PIXEL_SIZE_48M
+) -> float:
+    """沿路径累加实际长度（米）；空路径或单点路径为 0。"""
+    cells = list(path)
+    return sum(step_length_m(a, b, pixel_size) for a, b in zip(cells, cells[1:]))
 
 
 def neighbors(
@@ -310,3 +361,7 @@ if __name__ == "__main__":
     print("\n从 (0,0) 出发可走的邻格：")
     for nxt, w, f in neighbor_steps(demo, (0, 0)):
         print(f"  {nxt}: 代价 {w:.6f}")
+    print("\n48m × 48m 像元（三角公式，仅长度、不改成本）：")
+    print(f"  斜向系数 = {diagonal_factor_from_pixels():.6f}")
+    print(f"  单步斜向长度 = {step_length_m((0, 0), (1, 1)):.6f} 米")
+    print(f"  该路径总长度 = {path_length_m(path):.6f} 米")
