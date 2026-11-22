@@ -45,25 +45,33 @@
 
 ## 目录结构
 
-```
+```text
 GIS第二次作业/
-├── README.md                  # 本说明：平台选型、分工、进度、运行与测试
-├── cost_raster.py             # 甲：栅格加载、元数据、基础校验、成本取值
-├── coord_transform.py         # 甲：坐标 ↔ 行列号双向换算、输入解析、QGIS 对接
-├── cost_rules.py              # 乙：成本规则与单步代价
-├── golden_cases.py            # 乙：手算金标准样例
-├── contract.py                # 乙：全组接口契约草案
-├── cost_path/                 # 丙：Dijkstra / A* 搜索引擎
-├── benchmarks/                # 丙：固定种子的规模测速与记录
-├── docs/                      # 接口草案与第一周测试报告
+├── README.md                   # 平台选型、分工、进度、运行与测试
+├── cost_raster.py              # 甲：栅格加载、元数据、基础校验与成本取值
+├── coord_transform.py          # 甲：坐标与行列号换算、输入解析、QGIS 对接
+├── cost_rules.py               # 乙：成本规则与单步代价
+├── golden_cases.py             # 乙：手算金标准样例
+├── contract.py                 # 乙：全组接口契约草案
+├── cost_path/                  # 丙：Dijkstra / A* 搜索引擎
+├── benchmarks/                 # 丙：固定种子的规模测速与记录
+├── qgis_cost_path/             # 丁：QGIS 插件与成本路径可视化
+│   ├── __init__.py             # QGIS 插件加载入口
+│   ├── metadata.txt            # 插件名称、版本与 QGIS 版本要求
+│   ├── plugin.py               # 注册工具栏按钮与菜单入口
+│   ├── dialog.py               # 成本网格、起终点选择与路径结果展示
+│   └── github_sync.py          # 检查 GitHub main 更新与缓存版本回退
+├── build_qgis_plugin.py        # 丁：生成可安装的 QGIS 插件 ZIP
+├── docs/                       # 接口草案与第一周测试报告
 ├── sample_data/
-│   ├── cost_grid_4x4.json     # 4×4 通用测试样例（5/7/8/4，含 1 个 NoData）
-│   └── cost_grid_5x5.json     # 5×5 通用测试样例（含 NoData 障碍格）
+│   ├── cost_grid_4x4.json       # 4×4 通用测试样例
+│   ├── cost_grid_5x5.json       # 5×5 通用测试样例
+│   └── cost_grid_10x10.json     # 丁：10×10 障碍绕行演示样例
 └── tests/
-    ├── test_cost_raster.py         # 甲第一次进度单元测试
-    ├── test_coord_transform.py     # 甲第二次进度单元测试
-    ├── test_cost_rules.py          # 乙成本规则单元测试
-    └── test_engine.py              # 丙准确性与甲组数据对接测试
+    ├── test_cost_raster.py      # 甲：栅格读取与校验测试
+    ├── test_coord_transform.py  # 甲：坐标换算测试
+    ├── test_cost_rules.py       # 乙：成本规则测试
+    └── test_engine.py           # 丙：搜索准确性与数据对接测试
 ```
 
 ## 运行与测试
