@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QPointF, Qt
-from qgis.PyQt.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
+from qgis.PyQt.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from qgis.PyQt.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPolygonF
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFileDialog,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
@@ -73,6 +73,163 @@ class GridView(QTableWidget):
             painter.end()
 
 
+class RasterGridView(QWidget):
+    cellClicked = pyqtSignal(int, int)
+
+    def __init__(self):
+        super().__init__()
+        self.raster = None
+        self.image = None
+        self.path_cells = ()
+        self.start = None
+        self.goal = None
+        self.setMinimumSize(420, 420)
+        self.setMouseTracking(True)
+
+    def set_raster(self, raster):
+        self.raster = raster
+        self.path_cells = ()
+        self.start = None
+        self.goal = None
+
+        rows = raster["rows"]
+        cols = raster["cols"]
+        valid_values = [
+            float(value)
+            for row, values in enumerate(raster["values"])
+            for col, value in enumerate(values)
+            if not is_nodata(raster, row, col) and float(value) > 0
+        ]
+        minimum = min(valid_values)
+        maximum = max(valid_values)
+        span = maximum - minimum
+
+        image = QImage(cols, rows, QImage.Format_RGB32)
+        for row, values in enumerate(raster["values"]):
+            for col, value in enumerate(values):
+                if is_nodata(raster, row, col) or float(value) <= 0:
+                    color = QColor("#39413f")
+                else:
+                    ratio = 0.0 if span == 0 else (float(value) - minimum) / span
+                    hue = 0.35 * (1.0 - ratio)
+                    color = QColor.fromHsvF(hue, 0.72, 0.92)
+                image.setPixelColor(col, row, color)
+
+        self.image = image
+        self.update()
+
+    def set_path(self, path, start, goal):
+        self.path_cells = tuple(path)
+        self.start = start
+        self.goal = goal
+        self.update()
+
+    def image_rect(self):
+        if self.raster is None:
+            return QRectF()
+        available_width = max(1, self.width() - 20)
+        available_height = max(1, self.height() - 20)
+        ratio = min(
+            available_width / self.raster["cols"],
+            available_height / self.raster["rows"],
+        )
+        width = self.raster["cols"] * ratio
+        height = self.raster["rows"] * ratio
+        return QRectF(
+            (self.width() - width) / 2,
+            (self.height() - height) / 2,
+            width,
+            height,
+        )
+
+    def cell_center(self, cell, rect):
+        row, col = cell
+        return QPointF(
+            rect.left() + (col + 0.5) * rect.width() / self.raster["cols"],
+            rect.top() + (row + 0.5) * rect.height() / self.raster["rows"],
+        )
+
+    def event_cell(self, position):
+        rect = self.image_rect()
+        if self.raster is None or not rect.contains(position):
+            return None
+        col = min(
+            int((position.x() - rect.left()) * self.raster["cols"] / rect.width()),
+            self.raster["cols"] - 1,
+        )
+        row = min(
+            int((position.y() - rect.top()) * self.raster["rows"] / rect.height()),
+            self.raster["rows"] - 1,
+        )
+        return row, col
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            cell = self.event_cell(event.localPos())
+            if cell is not None:
+                self.cellClicked.emit(*cell)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        cell = self.event_cell(event.localPos())
+        if cell is None:
+            self.setToolTip("")
+        else:
+            row, col = cell
+            if is_nodata(self.raster, row, col):
+                value = "NoData"
+            else:
+                value = "{:g}".format(self.raster["values"][row][col])
+            self.setToolTip("X={}, Y={}，成本 {}".format(row, col, value))
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.image is None:
+            return
+
+        rect = self.image_rect()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        painter.drawImage(rect, self.image)
+        painter.setPen(QPen(QColor("#ffffff"), 1))
+        painter.drawRect(rect)
+
+        if len(self.path_cells) > 1:
+            points = [
+                self.cell_center(cell, rect)
+                for cell in self.path_cells
+            ]
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(
+                QPen(
+                    QColor("#ffffff"), 6, Qt.SolidLine,
+                    Qt.RoundCap, Qt.RoundJoin,
+                )
+            )
+            painter.drawPolyline(QPolygonF(points))
+            painter.setPen(
+                QPen(
+                    QColor("#087f8c"), 3, Qt.SolidLine,
+                    Qt.RoundCap, Qt.RoundJoin,
+                )
+            )
+            painter.drawPolyline(QPolygonF(points))
+
+        for cell, color in (
+            (self.start, START_COLOR),
+            (self.goal, GOAL_COLOR),
+        ):
+            if cell is None:
+                continue
+            point = self.cell_center(cell, rect)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.setBrush(QBrush(QColor(color)))
+            painter.drawEllipse(point, 6, 6)
+
+        painter.end()
+
+
 class CostPathDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -125,6 +282,8 @@ class CostPathDialog(QDialog):
         self.pick_group.addButton(self.pick_goal)
 
         self.table = GridView()
+        self.raster_view = RasterGridView()
+        self.raster_view.hide()
         self.start_label = QLabel()
         self.goal_label = QLabel()
         self.cost_label = QLabel()
@@ -168,6 +327,7 @@ class CostPathDialog(QDialog):
         grid_layout.addLayout(points)
         grid_layout.addWidget(self.grid_hint)
         grid_layout.addWidget(self.table)
+        grid_layout.addWidget(self.raster_view, 1)
         grid_layout.addWidget(self.source)
 
         metrics = QFormLayout()
@@ -219,6 +379,7 @@ class CostPathDialog(QDialog):
         self.algorithm.currentIndexChanged.connect(self.calculate)
         self.table.cellClicked.connect(self.pick_cell)
         self.table.cellActivated.connect(self.pick_cell)
+        self.raster_view.cellClicked.connect(self.pick_cell)
         self.apply_xy.clicked.connect(self.apply_coordinates)
         self.xy.returnPressed.connect(self.apply_coordinates)
         self.map_pick.clicked.connect(self.start_map_pick)
@@ -342,14 +503,19 @@ class CostPathDialog(QDialog):
 
         self.table.setEnabled(not self.large_grid)
         self.table.setVisible(not self.large_grid)
+        self.raster_view.setVisible(self.large_grid)
         self.grid_hint.setVisible(self.large_grid)
         if self.large_grid:
             self.grid_hint.setText(
-                "已加载 {:,} 个像元。为避免界面卡顿，不绘制完整表格；"
-                "请使用 X,Y 输入或“地图点选”设置起点和终点。".format(
+                "已加载 {:,} 个像元。左上角为 X=0,Y=0，"
+                "向下 X 增加，向右 Y 增加；请选择起点或终点后点击栅格图。".format(
                     cell_count
                 )
             )
+            self.xy.setPlaceholderText(
+                "X, Y（左上角 0,0；X 向下，Y 向右）"
+            )
+            self.raster_view.set_raster(raster)
 
         self.table.setUpdatesEnabled(False)
         try:
@@ -421,7 +587,9 @@ class CostPathDialog(QDialog):
             return
         if self.is_blocked_cell(row, col):
             self.status.setText(
-                "格子 {} 不可通行。".format(cell_label((row, col)))
+                "格子 {} 不可通行。".format(
+                    self.coordinate_label((row, col))
+                )
             )
             self.status.show()
             return
@@ -460,15 +628,19 @@ class CostPathDialog(QDialog):
             self.paint_cell(cell)
         self.table.path_cells = path
         self.table.viewport().update()
+        self.raster_view.set_path(path, self.start, self.goal)
         self.show_result(status)
 
+    def coordinate_label(self, cell):
+        if cell is None:
+            return "—"
+        if self.large_grid:
+            return "X={}, Y={}".format(cell[0], cell[1])
+        return cell_label(cell)
+
     def show_result(self, status):
-        self.start_label.setText(
-            cell_label(self.start) if self.start is not None else "—"
-        )
-        self.goal_label.setText(
-            cell_label(self.goal) if self.goal is not None else "—"
-        )
+        self.start_label.setText(self.coordinate_label(self.start))
+        self.goal_label.setText(self.coordinate_label(self.goal))
         self.status.setText(status)
         self.status.setVisible(bool(status))
         result = self.result
@@ -489,11 +661,11 @@ class CostPathDialog(QDialog):
         self.length_label.setText("{:.2f} 格".format(stats["length"]))
         self.expanded_label.setText(str(stats["expanded"]))
         self.time_label.setText("{:.3f} ms".format(stats["elapsed_ms"]))
-        lines = [cell_label(self.start) + " 起点"]
+        lines = [self.coordinate_label(self.start) + " 起点"]
         for step in stats["step_details"]:
             lines.append(
                 "→ {}  +{:.2f}".format(
-                    cell_label(step["to"]), step["step_cost"]
+                    self.coordinate_label(step["to"]), step["step_cost"]
                 )
             )
         self.route_text.setPlainText("\n".join(lines))
@@ -504,7 +676,9 @@ class CostPathDialog(QDialog):
     def set_endpoint(self, cell, role):
         if self.is_blocked_cell(*cell):
             raise ValueError(
-                "{}落在不可通行格 {}。".format(role, cell_label(cell))
+                "{}落在不可通行格 {}。".format(
+                    role, self.coordinate_label(cell)
+                )
             )
         if role == "起点":
             self.start = cell
@@ -517,7 +691,24 @@ class CostPathDialog(QDialog):
             return
         role = self.selected_role()
         try:
-            if raster_crs(self.raster).isValid():
+            if self.large_grid:
+                x_number, y_number = parse_coord_text(self.xy.text())
+                if not x_number.is_integer() or not y_number.is_integer():
+                    raise ValueError("X 和 Y 必须是整数，例如 250,283。")
+                row = int(x_number)
+                col = int(y_number)
+                if not (
+                    0 <= row < self.raster["rows"]
+                    and 0 <= col < self.raster["cols"]
+                ):
+                    raise ValueError(
+                        "坐标超出范围：X 应为 0 到 {}，Y 应为 0 到 {}。".format(
+                            self.raster["rows"] - 1,
+                            self.raster["cols"] - 1,
+                        )
+                    )
+                cell = (row, col)
+            elif raster_crs(self.raster).isValid():
                 point = require_passable(
                     resolve_point(self.raster, self.xy.text(), role=role)
                 )
