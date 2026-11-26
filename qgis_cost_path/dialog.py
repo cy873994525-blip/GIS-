@@ -9,7 +9,8 @@ from qgis.PyQt.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from qgis.core import (
-    QgsCoordinateTransform, QgsCsException, QgsProject, QgsRectangle,
+    QgsCoordinateTransform, QgsCsException, QgsProject, QgsRasterLayer,
+    QgsRectangle,
 )
 from qgis.gui import QgsMapToolEmitPoint
 from qgis.utils import iface
@@ -25,7 +26,8 @@ from .qgis_layers import make_result_layers, raster_crs, read_qgis_raster
 
 
 SAMPLES = Path(__file__).resolve().parent / "sample_data"
-MAX_CELLS = 10_000
+MAX_TABLE_CELLS = 10_000
+MAX_ANALYSIS_CELLS = 1_000_000
 START_COLOR = "#006c60"
 GOAL_COLOR = "#994523"
 
@@ -85,6 +87,8 @@ class CostPathDialog(QDialog):
         self.marked_cells = set()
         self.imported_grid = None
         self.output_ids = []
+        self.source_raster_id = None
+        self.large_grid = False
 
         self.canvas = iface.mapCanvas()
         self.map_tool = QgsMapToolEmitPoint(self.canvas)
@@ -105,6 +109,10 @@ class CostPathDialog(QDialog):
 
         self.load_button = QPushButton("导入 JSON…")
         self.load_button.setIcon(
+            self.style().standardIcon(QStyle.SP_DialogOpenButton)
+        )
+        self.load_tiff_button = QPushButton("导入 GeoTIFF…")
+        self.load_tiff_button.setIcon(
             self.style().standardIcon(QStyle.SP_DialogOpenButton)
         )
         self.pick_start = QRadioButton("起点")
@@ -132,11 +140,18 @@ class CostPathDialog(QDialog):
         self.source = QLabel()
         self.source.setTextFormat(Qt.PlainText)
         self.source.setWordWrap(True)
+        self.grid_hint = QLabel()
+        self.grid_hint.setWordWrap(True)
+        self.grid_hint.setStyleSheet(
+            "padding: 12px; color: #43504d; background: #eef3f1;"
+        )
+        self.grid_hint.hide()
 
         options = QHBoxLayout()
         options.addWidget(QLabel("数据"))
         options.addWidget(self.sample)
         options.addWidget(self.load_button)
+        options.addWidget(self.load_tiff_button)
         options.addStretch()
         options.addWidget(QLabel("算法"))
         options.addWidget(self.algorithm)
@@ -151,6 +166,7 @@ class CostPathDialog(QDialog):
         grid_layout = QVBoxLayout(grid_panel)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.addLayout(points)
+        grid_layout.addWidget(self.grid_hint)
         grid_layout.addWidget(self.table)
         grid_layout.addWidget(self.source)
 
@@ -199,6 +215,7 @@ class CostPathDialog(QDialog):
 
         self.sample.currentIndexChanged.connect(self.load_sample)
         self.load_button.clicked.connect(self.import_json)
+        self.load_tiff_button.clicked.connect(self.import_geotiff)
         self.algorithm.currentIndexChanged.connect(self.calculate)
         self.table.cellClicked.connect(self.pick_cell)
         self.table.cellActivated.connect(self.pick_cell)
@@ -211,8 +228,10 @@ class CostPathDialog(QDialog):
 
     def read_grid(self, path):
         raster = load_raster_file(path)
-        if raster["rows"] * raster["cols"] > MAX_CELLS:
-            raise RasterError("当前窗口最多显示 {:,} 格".format(MAX_CELLS))
+        if raster["rows"] * raster["cols"] > MAX_ANALYSIS_CELLS:
+            raise RasterError(
+                "当前插件最多分析 {:,} 格".format(MAX_ANALYSIS_CELLS)
+            )
         return raster
 
     def load_sample(self):
@@ -246,11 +265,48 @@ class CostPathDialog(QDialog):
     def import_active_raster(self):
         layer = iface.activeLayer()
         try:
-            raster = read_qgis_raster(layer, MAX_CELLS)
+            raster = read_qgis_raster(layer, MAX_ANALYSIS_CELLS)
         except (ImportError, OSError, RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "无法读取当前栅格", str(error))
             return
         self.set_imported_grid(raster, layer.name())
+
+    def import_geotiff(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择成本 GeoTIFF",
+            "",
+            "GeoTIFF (*.tif *.tiff)",
+        )
+        if not filename:
+            return
+
+        layer = QgsRasterLayer(filename, Path(filename).stem, "gdal")
+        if not layer.isValid():
+            QMessageBox.warning(
+                self, "无法导入 GeoTIFF", "QGIS 无法打开所选栅格文件。"
+            )
+            return
+
+        try:
+            raster = read_qgis_raster(layer, MAX_ANALYSIS_CELLS)
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "无法导入 GeoTIFF", str(error))
+            return
+
+        project = QgsProject.instance()
+        project.addMapLayer(layer)
+        self.source_raster_id = layer.id()
+        self.set_imported_grid(raster, layer.name())
+
+        try:
+            extent = self.coordinate_transform(
+                layer.crs(), self.canvas.mapSettings().destinationCrs()
+            ).transformBoundingBox(layer.extent())
+            self.canvas.setExtent(extent)
+            self.canvas.refresh()
+        except QgsCsException:
+            pass
 
     def set_imported_grid(self, raster, name):
         self.imported_grid = (raster, name)
@@ -274,6 +330,8 @@ class CostPathDialog(QDialog):
         self.table.path_cells = ()
 
         crs = raster_crs(raster)
+        cell_count = raster["rows"] * raster["cols"]
+        self.large_grid = cell_count > MAX_TABLE_CELLS
         self.map_pick.setEnabled(crs.isValid())
         if crs.isValid():
             self.xy.setPlaceholderText(
@@ -282,30 +340,45 @@ class CostPathDialog(QDialog):
         else:
             self.xy.setPlaceholderText("行, 列（从 1 开始，例如 1,1）")
 
+        self.table.setEnabled(not self.large_grid)
+        self.table.setVisible(not self.large_grid)
+        self.grid_hint.setVisible(self.large_grid)
+        if self.large_grid:
+            self.grid_hint.setText(
+                "已加载 {:,} 个像元。为避免界面卡顿，不绘制完整表格；"
+                "请使用 X,Y 输入或“地图点选”设置起点和终点。".format(
+                    cell_count
+                )
+            )
+
         self.table.setUpdatesEnabled(False)
         try:
             self.table.clear()
-            self.table.setRowCount(raster["rows"])
-            self.table.setColumnCount(raster["cols"])
-            for row, values in enumerate(raster["values"]):
-                for col, value in enumerate(values):
-                    blocked = self.is_blocked_cell(row, col)
-                    item = QTableWidgetItem(
-                        "×" if blocked else "{:.6g}".format(value)
-                    )
-                    item.setTextAlignment(Qt.AlignCenter)
-                    item.setToolTip(
-                        "{} {}".format(
-                            cell_label((row, col)),
-                            "不可通行" if blocked else value,
+            if self.large_grid:
+                self.table.setRowCount(0)
+                self.table.setColumnCount(0)
+            else:
+                self.table.setRowCount(raster["rows"])
+                self.table.setColumnCount(raster["cols"])
+                for row, values in enumerate(raster["values"]):
+                    for col, value in enumerate(values):
+                        blocked = self.is_blocked_cell(row, col)
+                        item = QTableWidgetItem(
+                            "×" if blocked else "{:.6g}".format(value)
                         )
-                    )
-                    self.table.setItem(row, col, item)
-                    self.paint_cell((row, col))
-                    if not blocked:
-                        if self.start is None:
-                            self.start = (row, col)
-                        self.goal = (row, col)
+                        item.setTextAlignment(Qt.AlignCenter)
+                        item.setToolTip(
+                            "{} {}".format(
+                                cell_label((row, col)),
+                                "不可通行" if blocked else value,
+                            )
+                        )
+                        self.table.setItem(row, col, item)
+                        self.paint_cell((row, col))
+                        if not blocked:
+                            if self.start is None:
+                                self.start = (row, col)
+                            self.goal = (row, col)
         finally:
             self.table.setUpdatesEnabled(True)
 
@@ -363,8 +436,8 @@ class CostPathDialog(QDialog):
             return
         status = ""
         self.result = None
-        if self.start is None:
-            status = "栅格中没有可通行的格子。"
+        if self.start is None or self.goal is None:
+            status = "请设置起点和终点。"
         else:
             try:
                 self.result = shortest_path(

@@ -30,7 +30,7 @@ def raster_crs(raster):
     return crs
 
 
-def read_qgis_raster(layer, max_cells):
+def read_qgis_raster(layer, max_cells=None):
     from osgeo import gdal
 
     if not isinstance(layer, QgsRasterLayer):
@@ -46,7 +46,7 @@ def read_qgis_raster(layer, max_cells):
 
     rows = dataset.RasterYSize
     cols = dataset.RasterXSize
-    if rows * cols > max_cells:
+    if max_cells is not None and rows * cols > max_cells:
         raise ValueError(
             "当前窗口最多显示 {:,} 格，所选栅格为 {} × {}。".format(
                 max_cells, rows, cols
