@@ -15,7 +15,9 @@ from qgis.gui import QgsMapToolEmitPoint
 from qgis.utils import iface
 
 from .core.contract import shortest_path
-from .core.coord_transform import map_to_cell, require_passable, resolve_point
+from .core.coord_transform import (
+    map_to_cell, parse_coord_text, require_passable, resolve_point,
+)
 from .core.cost_path import NoRouteError
 from .core.cost_raster import RasterError, is_nodata, load_raster_file
 from .core.cost_rules import is_blocked, resolve_config
@@ -273,9 +275,12 @@ class CostPathDialog(QDialog):
 
         crs = raster_crs(raster)
         self.map_pick.setEnabled(crs.isValid())
-        self.xy.setPlaceholderText(
-            "X, Y（{}）".format(crs.authid() or "栅格坐标")
-        )
+        if crs.isValid():
+            self.xy.setPlaceholderText(
+                "X, Y（{}）".format(crs.authid() or "栅格坐标")
+            )
+        else:
+            self.xy.setPlaceholderText("行, 列（从 1 开始，例如 1,1）")
 
         self.table.setUpdatesEnabled(False)
         try:
@@ -439,10 +444,28 @@ class CostPathDialog(QDialog):
             return
         role = self.selected_role()
         try:
-            point = require_passable(
-                resolve_point(self.raster, self.xy.text(), role=role)
-            )
-            self.set_endpoint((point["row"], point["col"]), role)
+            if raster_crs(self.raster).isValid():
+                point = require_passable(
+                    resolve_point(self.raster, self.xy.text(), role=role)
+                )
+                cell = (point["row"], point["col"])
+            else:
+                row_number, col_number = parse_coord_text(self.xy.text())
+                if not row_number.is_integer() or not col_number.is_integer():
+                    raise ValueError("行号和列号必须是整数，例如 1,1。")
+                row = int(row_number) - 1
+                col = int(col_number) - 1
+                if not (
+                    0 <= row < self.raster["rows"]
+                    and 0 <= col < self.raster["cols"]
+                ):
+                    raise ValueError(
+                        "行列号超出范围：请输入 1 到 {} 行、1 到 {} 列。".format(
+                            self.raster["rows"], self.raster["cols"]
+                        )
+                    )
+                cell = (row, col)
+            self.set_endpoint(cell, role)
         except ValueError as error:
             QMessageBox.warning(self, "坐标无效", str(error))
 
