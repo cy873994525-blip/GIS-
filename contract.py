@@ -21,11 +21,18 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from cost_rules import (SQRT2, CostConfig, can_step, cell_value,
-                        distance_factor, neighbor_steps, neighbors,
-                        path_step_details, raster_shape, resolve_config, step_cost)
-from cost_path import CostGrid, find_path
-from golden_cases import GRID_4X4
+if __package__:
+    from .cost_rules import (SQRT2, CostConfig, can_step, cell_value,
+                             distance_factor, neighbor_steps, neighbors,
+                             path_step_details, raster_shape, resolve_config, step_cost)
+    from .cost_path import CostGrid, find_path
+    from .golden_cases import GRID_4X4
+else:
+    from cost_rules import (SQRT2, CostConfig, can_step, cell_value,
+                            distance_factor, neighbor_steps, neighbors,
+                            path_step_details, raster_shape, resolve_config, step_cost)
+    from cost_path import CostGrid, find_path
+    from golden_cases import GRID_4X4
 
 CONTRACT_VERSION = "0.1"
 
