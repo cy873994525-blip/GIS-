@@ -10,9 +10,19 @@ PLUGIN = "qgis_cost_path"
 
 
 def build(output):
-    plugin_files = ("__init__.py", "metadata.txt", "plugin.py", "dialog.py", "github_sync.py")
-    core_files = ("cost_raster.py", "cost_path/__init__.py", "cost_path/engine.py")
-    samples = ("cost_grid_4x4.json", "cost_grid_5x5.json", "cost_grid_10x10.json")
+    plugin_files = (
+        "__init__.py", "metadata.txt", "plugin.py", "dialog.py",
+        "github_sync.py", "qgis_layers.py",
+    )
+    core_files = (
+        "cost_raster.py", "coord_transform.py", "cost_rules.py",
+        "contract.py", "golden_cases.py",
+        "cost_path/__init__.py", "cost_path/engine.py",
+    )
+    samples = (
+        "cost_grid_4x4.json", "cost_grid_5x5.json",
+        "cost_grid_10x10.json", "cost_grid_4x4_map.json",
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         for name in plugin_files:

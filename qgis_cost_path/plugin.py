@@ -16,7 +16,7 @@ class CostPathPlugin:
         self.dialog = None
         self.revision = None
         self.task = None
-        self.cache = Path(QgsApplication.qgisSettingsDirPath()) / "gis-cost-path-cache"
+        self.cache = Path(QgsApplication.qgisSettingsDirPath()) / "gis-cost-path-cache-v2"
 
     def initGui(self):
         window = self.iface.mainWindow()

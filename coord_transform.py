@@ -181,7 +181,10 @@ def resolve_point(raster, text, role="起点"):
 
 def describe_cell(raster, row, col, role="起点", x=None, y=None):
     """组装单点的完整信息：行列号、格心坐标、成本值、是否可通行。"""
-    from cost_raster import get_cost, is_nodata  # 延迟导入，避免模块循环依赖
+    if __package__:
+        from .cost_raster import get_cost, is_nodata
+    else:
+        from cost_raster import get_cost, is_nodata
 
     if x is None or y is None:
         x, y = cell_to_map(raster, row, col, anchor="center")
@@ -230,7 +233,10 @@ def from_geotransform(geotransform, rows, cols, values, nodata=None, crs="unknow
     geotransform = (x0, sx, rot_x, y0, rot_y, sy)，其中 sy 通常为负值（自北向南）。
     本进度不支持带旋转的栅格：rot_x / rot_y 非零时直接报错，不猜测近似。
     """
-    from cost_raster import build_raster  # 延迟导入，避免模块循环依赖
+    if __package__:
+        from .cost_raster import build_raster
+    else:
+        from cost_raster import build_raster
 
     if geotransform is None or len(geotransform) != 6:
         raise CoordError("geotransform 必须是 6 个数值，当前为 {!r}".format(geotransform))

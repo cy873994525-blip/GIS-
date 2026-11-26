@@ -40,7 +40,10 @@ def payload_path(path):
         relative = PurePosixPath(*path.parts[1:])
         if relative.name not in {"__init__.py", "plugin.py", "metadata.txt", "github_sync.py"}:
             return relative
-    if path.parts[0] == "cost_path" or path.as_posix() in {"cost_raster.py", "cost_rules.py"}:
+    if path.parts[0] == "cost_path" or path.as_posix() in {
+        "cost_raster.py", "coord_transform.py", "cost_rules.py",
+        "contract.py", "golden_cases.py",
+    }:
         return PurePosixPath("core") / path
     if path.parts[0] == "sample_data" and path.suffix == ".json":
         return path
@@ -83,8 +86,12 @@ def stage_revision(cache, sha, archive_data):
         if not (staging / "dialog.py").is_file():
             shutil.copy2(LOCAL / "dialog.py", staging / "dialog.py")
         required = (
-            "core/cost_raster.py", "core/cost_path/__init__.py", "core/cost_path/engine.py",
-            "sample_data/cost_grid_4x4.json", "sample_data/cost_grid_5x5.json",
+            "core/cost_raster.py", "core/coord_transform.py", "core/cost_rules.py",
+            "core/contract.py", "core/golden_cases.py",
+            "core/cost_path/__init__.py", "core/cost_path/engine.py",
+            "qgis_layers.py", "sample_data/cost_grid_4x4.json",
+            "sample_data/cost_grid_5x5.json", "sample_data/cost_grid_10x10.json",
+            "sample_data/cost_grid_4x4_map.json",
         )
         for name in required:
             if not (staging / name).is_file():
