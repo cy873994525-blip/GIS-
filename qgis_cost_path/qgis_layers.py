@@ -1,4 +1,6 @@
+import csv
 import math
+from pathlib import Path
 
 from qgis.PyQt.QtCore import QMetaType
 from qgis.core import (
@@ -12,10 +14,12 @@ from qgis.core import (
     QgsMarkerSymbol,
     QgsPalLayerSettings,
     QgsPointXY,
+    QgsProject,
     QgsRasterLayer,
     QgsRendererCategory,
     QgsVectorLayer,
     QgsVectorLayerSimpleLabeling,
+    QgsVectorFileWriter,
 )
 
 from .core.coord_transform import cell_to_map, from_geotransform
@@ -243,3 +247,75 @@ def make_result_layers(raster, result):
     endpoint_layer.setLabelsEnabled(True)
     layers.append(endpoint_layer)
     return layers
+
+
+def export_result_files(raster, result, filename, summary, comparisons):
+    output = Path(filename)
+    if output.suffix.lower() != ".gpkg":
+        output = output.with_suffix(".gpkg")
+    layers = make_result_layers(raster, result)
+    transform_context = QgsProject.instance().transformContext()
+
+    for index, layer in enumerate(layers):
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = "GPKG"
+        options.fileEncoding = "UTF-8"
+        options.layerName = (
+            "route_segments"
+            if layer.name() == "最小成本路径"
+            else "endpoints"
+        )
+        options.actionOnExistingFile = (
+            QgsVectorFileWriter.CreateOrOverwriteFile
+            if index == 0
+            else QgsVectorFileWriter.CreateOrOverwriteLayer
+        )
+        error, _, _, message = QgsVectorFileWriter.writeAsVectorFormatV3(
+            layer, str(output), transform_context, options
+        )
+        if error != QgsVectorFileWriter.NoError:
+            raise ValueError("GeoPackage 导出失败：{}".format(message))
+
+    summary_path = output.with_name(output.stem + "_summary.csv")
+    with summary_path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file)
+        writer.writerow(["项目", "值"])
+        for key, value in summary:
+            writer.writerow([key, value])
+        if comparisons:
+            writer.writerow([])
+            writer.writerow([
+                "算法", "总成本", "栅格长度", "实际距离米",
+                "扩展节点", "耗时毫秒",
+            ])
+            for comparison in comparisons:
+                writer.writerow([
+                    comparison["algorithm"],
+                    comparison["total_cost"],
+                    comparison["length"],
+                    comparison["distance_m"],
+                    comparison["expanded"],
+                    comparison["elapsed_ms"],
+                ])
+
+    segments_path = output.with_name(output.stem + "_segments.csv")
+    with segments_path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            "序号", "起点X", "起点Y", "终点X", "终点Y",
+            "进入格成本", "移动系数", "单步成本", "累计成本",
+        ])
+        for index, step in enumerate(result.stats["step_details"], start=1):
+            writer.writerow([
+                index,
+                step["from"][0],
+                step["from"][1],
+                step["to"][0],
+                step["to"][1],
+                step["enter_cost"],
+                step["factor"],
+                step["step_cost"],
+                step["cumulative"],
+            ])
+
+    return output, summary_path, segments_path
