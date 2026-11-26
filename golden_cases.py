@@ -37,7 +37,10 @@ from __future__ import annotations
 
 import math
 
-from cost_rules import PIXEL_SIZE_48M, SQRT2, Cell
+if __package__:
+    from .cost_rules import PIXEL_SIZE_48M, SQRT2, Cell
+else:
+    from cost_rules import PIXEL_SIZE_48M, SQRT2, Cell
 
 NODATA = -9999.0
 
