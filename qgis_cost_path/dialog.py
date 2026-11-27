@@ -1,10 +1,11 @@
+from dataclasses import replace
 from pathlib import Path
 
 from qgis.PyQt.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPolygonF
 from qgis.PyQt.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFileDialog,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
+    QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
     QPushButton, QRadioButton, QSplitter, QStyle, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
@@ -24,6 +25,9 @@ from .core.cost_raster import RasterError, is_nodata, load_raster_file
 from .core.cost_rules import is_blocked, path_length_m, resolve_config
 from .qgis_layers import (
     export_result_files, make_result_layers, raster_crs, read_qgis_raster,
+)
+from .advanced_routes import (
+    raster_with_obstacles, route_through, second_route_through,
 )
 
 
@@ -77,6 +81,8 @@ class GridView(QTableWidget):
 
 class RasterGridView(QWidget):
     cellClicked = pyqtSignal(int, int)
+    waypointClicked = pyqtSignal(int, int)
+    rectangleSelected = pyqtSignal(int, int, int, int)
 
     def __init__(self):
         super().__init__()
@@ -85,6 +91,12 @@ class RasterGridView(QWidget):
         self.path_cells = ()
         self.start = None
         self.goal = None
+        self.waypoints = ()
+        self.alternative_path = ()
+        self.obstacle_rectangles = ()
+        self.interaction_mode = "endpoint"
+        self.drag_start = None
+        self.drag_current = None
         self.setMinimumSize(420, 420)
         self.setMouseTracking(True)
 
@@ -120,10 +132,22 @@ class RasterGridView(QWidget):
         self.image = image
         self.update()
 
-    def set_path(self, path, start, goal):
+    def set_overlays(
+        self, path, start, goal, waypoints=(),
+        alternative_path=(), obstacle_rectangles=(),
+    ):
         self.path_cells = tuple(path)
         self.start = start
         self.goal = goal
+        self.waypoints = tuple(waypoints)
+        self.alternative_path = tuple(alternative_path)
+        self.obstacle_rectangles = tuple(obstacle_rectangles)
+        self.update()
+
+    def set_interaction_mode(self, mode):
+        self.interaction_mode = mode
+        self.drag_start = None
+        self.drag_current = None
         self.update()
 
     def image_rect(self):
@@ -169,7 +193,14 @@ class RasterGridView(QWidget):
         if event.button() == Qt.LeftButton:
             cell = self.event_cell(event.localPos())
             if cell is not None:
-                self.cellClicked.emit(*cell)
+                if self.interaction_mode == "obstacle":
+                    self.drag_start = cell
+                    self.drag_current = cell
+                    self.update()
+                elif self.interaction_mode == "waypoint":
+                    self.waypointClicked.emit(*cell)
+                else:
+                    self.cellClicked.emit(*cell)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -183,7 +214,26 @@ class RasterGridView(QWidget):
             else:
                 value = "{:g}".format(self.raster["values"][row][col])
             self.setToolTip("X={}, Y={}，成本 {}".format(row, col, value))
+        if self.interaction_mode == "obstacle" and self.drag_start is not None:
+            self.drag_current = cell
+            self.update()
         super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if (
+            event.button() == Qt.LeftButton
+            and self.interaction_mode == "obstacle"
+            and self.drag_start is not None
+        ):
+            end = self.event_cell(event.localPos()) or self.drag_current
+            if end is not None:
+                self.rectangleSelected.emit(
+                    self.drag_start[0], self.drag_start[1], end[0], end[1]
+                )
+            self.drag_start = None
+            self.drag_current = None
+            self.update()
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -196,6 +246,41 @@ class RasterGridView(QWidget):
         painter.drawImage(rect, self.image)
         painter.setPen(QPen(QColor("#ffffff"), 1))
         painter.drawRect(rect)
+
+        for top, left, bottom, right in self.obstacle_rectangles:
+            first = self.cell_center((top, left), rect)
+            last = self.cell_center((bottom, right), rect)
+            cell_width = rect.width() / self.raster["cols"]
+            cell_height = rect.height() / self.raster["rows"]
+            obstacle_rect = QRectF(
+                first.x() - cell_width / 2,
+                first.y() - cell_height / 2,
+                last.x() - first.x() + cell_width,
+                last.y() - first.y() + cell_height,
+            )
+            painter.fillRect(obstacle_rect, QColor(205, 49, 49, 115))
+            painter.setPen(QPen(QColor("#c62828"), 2))
+            painter.drawRect(obstacle_rect)
+
+        if self.drag_start is not None and self.drag_current is not None:
+            first = self.cell_center(self.drag_start, rect)
+            last = self.cell_center(self.drag_current, rect)
+            painter.setPen(QPen(QColor("#c62828"), 2, Qt.DashLine))
+            painter.drawRect(QRectF(first, last).normalized())
+
+        if len(self.alternative_path) > 1:
+            alternate_points = [
+                self.cell_center(cell, rect)
+                for cell in self.alternative_path
+            ]
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(
+                QPen(
+                    QColor("#f28e2b"), 3, Qt.DashLine,
+                    Qt.RoundCap, Qt.RoundJoin,
+                )
+            )
+            painter.drawPolyline(QPolygonF(alternate_points))
 
         if len(self.path_cells) > 1:
             points = [
@@ -229,6 +314,18 @@ class RasterGridView(QWidget):
             painter.setBrush(QBrush(QColor(color)))
             painter.drawEllipse(point, 6, 6)
 
+        for index, cell in enumerate(self.waypoints, start=1):
+            point = self.cell_center(cell, rect)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.setBrush(QBrush(QColor("#7b2cbf")))
+            painter.drawEllipse(point, 6, 6)
+            painter.setPen(QPen(QColor("#ffffff"), 1))
+            painter.drawText(
+                QRectF(point.x() - 8, point.y() - 8, 16, 16),
+                Qt.AlignCenter,
+                str(index),
+            )
+
         painter.end()
 
 
@@ -236,7 +333,7 @@ class CostPathDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("GIS 成本路径")
-        self.resize(900, 530)
+        self.resize(1180, 720)
 
         self.raster = None
         self.config = None
@@ -249,6 +346,11 @@ class CostPathDialog(QDialog):
         self.source_raster_id = None
         self.large_grid = False
         self.comparison_results = []
+        self.temporary_blocked = set()
+        self.obstacle_rectangles = []
+        self.waypoints = []
+        self.segment_results = []
+        self.alternative_result = None
 
         self.canvas = iface.mapCanvas()
         self.map_tool = QgsMapToolEmitPoint(self.canvas)
@@ -324,7 +426,9 @@ class CostPathDialog(QDialog):
             '<span style="background:#f0e52a;">&nbsp;&nbsp;&nbsp;</span> 中成本　'
             '<span style="background:#eb4545;">&nbsp;&nbsp;&nbsp;</span> 高成本　'
             '<span style="background:#39413f;">&nbsp;&nbsp;&nbsp;</span> NoData　'
-            '<span style="color:#087f8c;">━</span> 最短路径'
+            '<span style="color:#087f8c;">━</span> 最短路径　'
+            '<span style="color:#f28e2b;">┄</span> 备选路线　'
+            '<span style="color:#7b2cbf;">●</span> 必经点'
         )
         self.legend.setTextFormat(Qt.RichText)
 
@@ -343,10 +447,28 @@ class CostPathDialog(QDialog):
         points.addWidget(self.pick_goal)
         points.addStretch()
 
+        advanced = QGridLayout()
+        self.obstacle_button = QPushButton("添加障碍面")
+        self.obstacle_button.setCheckable(True)
+        self.clear_obstacles_button = QPushButton("清除障碍")
+        self.waypoint_button = QPushButton("添加中间点")
+        self.waypoint_button.setCheckable(True)
+        self.clear_waypoints_button = QPushButton("清除中间点")
+        self.alternative_button = QPushButton("生成次低备选路线")
+        self.no_corner_cut = QCheckBox("禁止斜穿障碍拐角")
+        advanced.addWidget(self.obstacle_button, 0, 0)
+        advanced.addWidget(self.clear_obstacles_button, 0, 1)
+        advanced.addWidget(self.waypoint_button, 0, 2)
+        advanced.addWidget(self.clear_waypoints_button, 0, 3)
+        advanced.addWidget(self.alternative_button, 0, 4)
+        advanced.addWidget(self.no_corner_cut, 0, 5)
+        advanced.setColumnStretch(6, 1)
+
         grid_panel = QWidget()
         grid_layout = QVBoxLayout(grid_panel)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.addLayout(points)
+        grid_layout.addLayout(advanced)
         grid_layout.addWidget(self.grid_hint)
         grid_layout.addWidget(self.table)
         grid_layout.addWidget(self.raster_view, 1)
@@ -386,7 +508,7 @@ class CostPathDialog(QDialog):
         split = QSplitter(Qt.Horizontal)
         split.addWidget(grid_panel)
         split.addWidget(result_panel)
-        split.setSizes([480, 380])
+        split.setSizes([680, 430])
 
         self.xy = QLineEdit()
         self.xy.setPlaceholderText("成本栅格坐标系中的 X, Y")
@@ -410,10 +532,12 @@ class CostPathDialog(QDialog):
         self.sample.currentIndexChanged.connect(self.load_sample)
         self.load_button.clicked.connect(self.import_json)
         self.load_tiff_button.clicked.connect(self.import_geotiff)
-        self.algorithm.currentIndexChanged.connect(self.calculate)
+        self.algorithm.currentIndexChanged.connect(self.route_setting_changed)
         self.table.cellClicked.connect(self.pick_cell)
         self.table.cellActivated.connect(self.pick_cell)
         self.raster_view.cellClicked.connect(self.pick_cell)
+        self.raster_view.waypointClicked.connect(self.add_waypoint)
+        self.raster_view.rectangleSelected.connect(self.add_obstacle_rectangle)
         self.apply_xy.clicked.connect(self.apply_coordinates)
         self.xy.returnPressed.connect(self.apply_coordinates)
         self.map_pick.clicked.connect(self.start_map_pick)
@@ -421,6 +545,12 @@ class CostPathDialog(QDialog):
         self.use_raster.clicked.connect(self.import_active_raster)
         self.compare_button.clicked.connect(self.compare_algorithms)
         self.export_button.clicked.connect(self.export_result)
+        self.obstacle_button.toggled.connect(self.set_obstacle_mode)
+        self.clear_obstacles_button.clicked.connect(self.clear_obstacles)
+        self.waypoint_button.toggled.connect(self.set_waypoint_mode)
+        self.clear_waypoints_button.clicked.connect(self.clear_waypoints)
+        self.alternative_button.clicked.connect(self.generate_alternative)
+        self.no_corner_cut.toggled.connect(self.rule_changed)
         self.load_sample()
 
     def read_grid(self, path):
@@ -522,6 +652,13 @@ class CostPathDialog(QDialog):
         self.config = resolve_config(raster)
         self.start = None
         self.goal = None
+        self.temporary_blocked.clear()
+        self.obstacle_rectangles.clear()
+        self.waypoints.clear()
+        self.segment_results = []
+        self.alternative_result = None
+        self.obstacle_button.setChecked(False)
+        self.waypoint_button.setChecked(False)
         self.clear_comparison()
         self.xy.clear()
         self.marked_cells.clear()
@@ -600,6 +737,8 @@ class CostPathDialog(QDialog):
 
     def is_blocked_cell(self, row, col):
         return (
+            (row, col) in self.temporary_blocked
+            or
             is_nodata(self.raster, row, col)
             or is_blocked(self.raster, (row, col), self.config)
         )
@@ -637,24 +776,56 @@ class CostPathDialog(QDialog):
             self.start = (row, col)
         else:
             self.goal = (row, col)
+        self.alternative_result = None
         self.clear_comparison()
         self.calculate()
+
+    def current_config(self):
+        return replace(
+            self.config,
+            allow_corner_cut=not self.no_corner_cut.isChecked(),
+        )
+
+    def working_raster(self):
+        protected = set(self.waypoints)
+        protected.update(
+            cell for cell in (self.start, self.goal) if cell is not None
+        )
+        blocked = self.temporary_blocked - protected
+        return raster_with_obstacles(self.raster, blocked)
+
+    def update_overlays(self, path=()):
+        alternate = (
+            self.alternative_result.path
+            if self.alternative_result is not None
+            else ()
+        )
+        self.raster_view.set_overlays(
+            path,
+            self.start,
+            self.goal,
+            self.waypoints,
+            alternate,
+            self.obstacle_rectangles,
+        )
 
     def calculate(self):
         if self.raster is None:
             return
         status = ""
         self.result = None
+        self.segment_results = []
         if self.start is None or self.goal is None:
             status = "请设置起点和终点。"
         else:
             try:
-                self.result = shortest_path(
-                    self.raster,
+                self.result, self.segment_results = route_through(
+                    self.working_raster(),
                     self.start,
+                    self.waypoints,
                     self.goal,
-                    config=self.config,
-                    algorithm=self.algorithm.currentData(),
+                    self.current_config(),
+                    self.algorithm.currentData(),
                 )
             except (NoRouteError, ValueError) as error:
                 status = str(error)
@@ -669,7 +840,7 @@ class CostPathDialog(QDialog):
             self.paint_cell(cell)
         self.table.path_cells = path
         self.table.viewport().update()
-        self.raster_view.set_path(path, self.start, self.goal)
+        self.update_overlays(path)
         self.show_result(status)
 
     def coordinate_label(self, cell):
@@ -747,6 +918,17 @@ class CostPathDialog(QDialog):
             ("扩展节点", stats["expanded"]),
             ("搜索耗时（毫秒）", "{:.6f}".format(stats["elapsed_ms"])),
             ("坐标系", self.raster.get("crs", "unknown")),
+            ("必经中间点", "；".join(self.coordinate_label(cell) for cell in self.waypoints)),
+            ("临时禁行格数", len(self.temporary_blocked)),
+            ("禁止斜穿障碍拐角", "是" if self.no_corner_cut.isChecked() else "否"),
+            (
+                "备选路线成本",
+                ""
+                if self.alternative_result is None
+                else "{:.6f}".format(
+                    self.alternative_result.stats["total_cost"]
+                ),
+            ),
         ]
 
     def clear_comparison(self):
@@ -762,12 +944,13 @@ class CostPathDialog(QDialog):
         comparisons = []
         try:
             for algorithm in ("dijkstra", "astar"):
-                result = shortest_path(
-                    self.raster,
+                result, _segments = route_through(
+                    self.working_raster(),
                     self.start,
+                    self.waypoints,
                     self.goal,
-                    config=self.config,
-                    algorithm=algorithm,
+                    self.current_config(),
+                    algorithm,
                 )
                 distance_m = self.actual_distance_m(result)
                 comparisons.append({
@@ -865,6 +1048,98 @@ class CostPathDialog(QDialog):
     def selected_role(self):
         return "起点" if self.pick_start.isChecked() else "终点"
 
+    def set_obstacle_mode(self, checked):
+        if checked:
+            self.waypoint_button.setChecked(False)
+            self.raster_view.set_interaction_mode("obstacle")
+            self.status.setText("在栅格图上按住鼠标左键拖拽，框选临时禁行区域。")
+            self.status.show()
+        elif not self.waypoint_button.isChecked():
+            self.raster_view.set_interaction_mode("endpoint")
+
+    def set_waypoint_mode(self, checked):
+        if checked:
+            self.obstacle_button.setChecked(False)
+            self.raster_view.set_interaction_mode("waypoint")
+            self.status.setText("在栅格图上依次点击必须经过的中间点。")
+            self.status.show()
+        elif not self.obstacle_button.isChecked():
+            self.raster_view.set_interaction_mode("endpoint")
+
+    def add_obstacle_rectangle(self, row1, col1, row2, col2):
+        if self.raster is None:
+            return
+        top, bottom = sorted((row1, row2))
+        left, right = sorted((col1, col2))
+        rectangle = (top, left, bottom, right)
+        if rectangle not in self.obstacle_rectangles:
+            self.obstacle_rectangles.append(rectangle)
+        for row in range(top, bottom + 1):
+            for col in range(left, right + 1):
+                self.temporary_blocked.add((row, col))
+        self.alternative_result = None
+        self.clear_comparison()
+        self.calculate()
+
+    def clear_obstacles(self):
+        self.temporary_blocked.clear()
+        self.obstacle_rectangles.clear()
+        self.alternative_result = None
+        self.clear_comparison()
+        self.calculate()
+
+    def add_waypoint(self, row, col):
+        cell = (row, col)
+        if self.raster is None or self.is_blocked_cell(row, col):
+            QMessageBox.warning(self, "中间点无效", "所选格不可通行。")
+            return
+        if cell in self.waypoints or cell in (self.start, self.goal):
+            return
+        self.waypoints.append(cell)
+        self.alternative_result = None
+        self.clear_comparison()
+        self.calculate()
+
+    def clear_waypoints(self):
+        self.waypoints.clear()
+        self.alternative_result = None
+        self.clear_comparison()
+        self.calculate()
+
+    def rule_changed(self):
+        self.alternative_result = None
+        self.clear_comparison()
+        self.calculate()
+
+    def route_setting_changed(self):
+        self.alternative_result = None
+        self.clear_comparison()
+        self.calculate()
+
+    def generate_alternative(self):
+        if self.result is None or not self.segment_results:
+            QMessageBox.warning(self, "无法生成备选路线", "请先设置有效的起点和终点。")
+            return
+        try:
+            self.alternative_result = second_route_through(
+                self.working_raster(),
+                self.segment_results,
+                self.current_config(),
+                self.algorithm.currentData(),
+            )
+        except (NoRouteError, ValueError) as error:
+            QMessageBox.warning(self, "没有备选路线", str(error))
+            return
+        self.update_overlays(self.result.path)
+        self.status.setText(
+            "备选路线总成本 {:.2f}，比主路线增加 {:.2f}。".format(
+                self.alternative_result.stats["total_cost"],
+                self.alternative_result.stats["total_cost"]
+                - self.result.stats["total_cost"],
+            )
+        )
+        self.status.show()
+
     def set_endpoint(self, cell, role):
         if self.is_blocked_cell(*cell):
             raise ValueError(
@@ -876,6 +1151,7 @@ class CostPathDialog(QDialog):
             self.start = cell
         else:
             self.goal = cell
+        self.alternative_result = None
         self.clear_comparison()
         self.calculate()
 

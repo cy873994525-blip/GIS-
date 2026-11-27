@@ -89,7 +89,8 @@ def stage_revision(cache, sha, archive_data):
             "core/cost_raster.py", "core/coord_transform.py", "core/cost_rules.py",
             "core/contract.py", "core/golden_cases.py",
             "core/cost_path/__init__.py", "core/cost_path/engine.py",
-            "qgis_layers.py", "sample_data/cost_grid_4x4.json",
+            "qgis_layers.py", "advanced_routes.py",
+            "sample_data/cost_grid_4x4.json",
             "sample_data/cost_grid_5x5.json", "sample_data/cost_grid_10x10.json",
             "sample_data/cost_grid_4x4_map.json",
         )
