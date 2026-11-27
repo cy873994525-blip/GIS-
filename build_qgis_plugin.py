@@ -12,7 +12,7 @@ PLUGIN = "qgis_cost_path"
 def build(output):
     plugin_files = (
         "__init__.py", "metadata.txt", "plugin.py", "dialog.py",
-        "github_sync.py", "qgis_layers.py",
+        "github_sync.py", "qgis_layers.py", "advanced_routes.py",
     )
     core_files = (
         "cost_raster.py", "coord_transform.py", "cost_rules.py",
